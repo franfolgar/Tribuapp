@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HomeManager AI</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Supabase SDK via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <!-- PANTALLA DE LOGIN / REGISTRO -->
+    <div id="auth-view" class="view-container">
+        <div class="auth-card">
+            <h1>🏠 HomeManager</h1>
+            <p>Gestiona tu hogar de forma inteligente</p>
+            
+            <form id="auth-form">
+                <input type="email" id="email" placeholder="Correo electrónico" required>
+                <input type="password" id="password" placeholder="Contraseña" required>
+                <button type="submit" id="btn-login" class="btn-primary">Entrar</button>
+            </form>
+            <p id="auth-error" class="error-text hidden"></p>
+        </div>
+    </div>
+
+    <!-- PANTALLA PRINCIPAL DE LA APP -->
+    <div id="app-view" class="view-container hidden">
+        <!-- Header superior -->
+        <header class="app-header">
+            <h2 id="view-title">Dashboard</h2>
+            <button id="btn-logout" class="btn-icon">🚪</button>
+        </header>
+
+        <!-- Contenedor dinámico donde inyectaremos las vistas -->
+        <main id="main-content" class="app-content">
+            <div id="dashboard-content">
+                <h3>Bienvenido a casa</h3>
+                <p>Cargando tus tareas y menús...</p>
+                <!-- Aquí pintaremos las tarjetas resumen -->
+            </div>
+        </main>
+
+        <!-- Barra de navegación inferior (Mobile-First) -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-target="dashboard">
+                <span class="icon">📊</span>
+                <span class="label">Resumen</span>
+            </button>
+            <button class="nav-item" data-target="tareas">
+                <span class="icon">✅</span>
+                <span class="label">Tareas</span>
+            </button>
+            <button class="nav-item" data-target="menus">
+                <span class="icon">🍽️</span>
+                <span class="label">Menú</span>
+            </button>
+            <button class="nav-item" data-target="compra">
+                <span class="icon">🛒</span>
+                <span class="label">Compra</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Lógica de la aplicación -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
