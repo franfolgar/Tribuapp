@@ -3,43 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tribuapp</title>
+    <title>Tribuapp - Gestión Familiar</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Supabase SDK via CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <!-- PANTALLA DE LOGIN / REGISTRO -->
+    <!-- PANTALLA 1: LOGIN / REGISTRO -->
     <div id="auth-view" class="view-container">
         <div class="auth-card">
-            <h1>⛺ Tribuap</h1>
+            <h1>⛺ Tribuapp</h1>
             <p>Gestiona tu hogar de forma inteligente</p>
             
             <form id="auth-form">
                 <input type="email" id="email" placeholder="Correo electrónico" required>
                 <input type="password" id="password" placeholder="Contraseña" required>
-                <button type="submit" id="btn-login" class="btn-primary">Entrar</button>
+                <button type="submit" id="btn-login" class="btn-primary">Entrar / Registrarse</button>
             </form>
             <p id="auth-error" class="error-text hidden"></p>
         </div>
     </div>
 
-    <!-- PANTALLA PRINCIPAL DE LA APP -->
+    <!-- PANTALLA 2: ONBOARDING (Solo para usuarios nuevos) -->
+    <div id="onboarding-view" class="view-container hidden">
+        <div class="auth-card">
+            <h2>⛺ Crea tu Tribu</h2>
+            <p>Configura el perfil de tu hogar para empezar.</p>
+            
+            <form id="onboarding-form">
+                <input type="text" id="tribu-nombre" placeholder="Nombre (ej. Los García)" required>
+                
+                <select id="tribu-dieta" class="input-select" required>
+                    <option value="Mediterránea">Dieta Mediterránea</option>
+                    <option value="Vegetariana">Vegetariana</option>
+                    <option value="Sin alergias">Libre (De todo)</option>
+                </select>
+
+                <select id="tribu-flexibilidad" class="input-select" required>
+                    <option value="Flexible">Somos Flexibles</option>
+                    <option value="Estricta">Planificación Estricta</option>
+                </select>
+
+                <button type="submit" id="btn-onboarding" class="btn-primary">Crear Tribu</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- PANTALLA 3: APP PRINCIPAL -->
     <div id="app-view" class="view-container hidden">
         <!-- Header superior -->
         <header class="app-header">
             <h2 id="view-title">Dashboard</h2>
-            <button id="btn-logout" class="btn-icon">🚪</button>
+            <button id="btn-logout" class="btn-icon" title="Cerrar Sesión">🚪</button>
         </header>
 
         <!-- Contenedor dinámico donde inyectaremos las vistas -->
         <main id="main-content" class="app-content">
-            <div id="dashboard-content">
-                <h3>Bienvenido a casa</h3>
-                <p>Cargando tus tareas y menús...</p>
-                <!-- Aquí pintaremos las tarjetas resumen -->
-            </div>
+            <!-- El contenido se inyecta desde JavaScript -->
         </main>
 
         <!-- Barra de navegación inferior (Mobile-First) -->
@@ -63,7 +82,7 @@
         </nav>
     </div>
 
-    <!-- Lógica de la aplicación -->
+    <!-- Lógica de la aplicación cargada como módulo ES -->
     <script type="module" src="app.js"></script>
 </body>
 </html>
