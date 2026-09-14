@@ -182,13 +182,10 @@ navItems.forEach(item => {
 function renderizarVista(vista) {
     switch(vista) {
         case 'dashboard':
-            mainContent.innerHTML = `
-                <h3>¡Hola de nuevo!</h3>
-                <p>Todo listo para organizar tu hogar.</p>
-            `;
+            mainContent.innerHTML = `<h3>¡Hola de nuevo!</h3><p>Todo listo para organizar tu hogar.</p>`;
             break;
         case 'tareas':
-            mainContent.innerHTML = `<h3>Tareas de la Tribu</h3><p>Cargando panel de tareas...</p>`;
+            cargarVistaTareas(); // Aquí llamamos a la base de datos real
             break;
         case 'menus':
             mainContent.innerHTML = `<h3>Menú Evolutivo</h3><p>Conectando con la Inteligencia Artificial...</p>`;
@@ -197,4 +194,112 @@ function renderizarVista(vista) {
             mainContent.innerHTML = `<h3>Despensa</h3><p>Generando lista de la compra...</p>`;
             break;
     }
+}
+        case 'compra':
+            mainContent.innerHTML = `<h3>Despensa</h3><p>Generando lista de la compra...</p>`;
+            break;
+    }
+}
+// ==========================================
+// 7. LÓGICA DE TAREAS
+// ==========================================
+async function cargarVistaTareas() {
+    // Pintamos la interfaz base
+    mainContent.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+            <h3>Tareas de la Tribu</h3>
+            <button id="btn-nueva-tarea" class="btn-primary" style="width:auto; padding:8px 16px; margin:0;">+ Asignar</button>
+        </div>
+        
+        <div id="form-nueva-tarea" class="auth-card hidden" style="margin-bottom: 20px; max-width:100%;">
+            <input type="text" id="nueva-tarea-nombre" placeholder="Ej. Fregar los platos" required>
+            <select id="nueva-tarea-asignado" class="input-select">
+                <option value="">Bolsa común (Cualquiera)</option>
+            </select>
+            <input type="date" id="nueva-tarea-fecha" class="input-select" required>
+            <button id="btn-guardar-tarea" class="btn-primary">Guardar Tarea</button>
+        </div>
+
+        <div id="lista-tareas">Cargando tareas...</div>
+    `;
+
+    // 1. Obtenemos tu ID de familia
+    const { data: userData } = await supabase.from('usuarios').select('familia_id').eq('id', currentUser.id).single();
+    const familiaId = userData.familia_id;
+
+    // 2. Cargamos los miembros de tu familia en el desplegable
+    const { data: miembros } = await supabase.from('usuarios').select('id, nombre').eq('familia_id', familiaId);
+    const selectAsignado = document.getElementById('nueva-tarea-asignado');
+    miembros.forEach(m => {
+        selectAsignado.innerHTML += `<option value="${m.id}">${m.nombre}</option>`;
+    });
+
+    // 3. Pintamos la lista de tareas
+    cargarListaTareas(familiaId, miembros);
+
+    // 4. Activamos los botones del formulario
+    document.getElementById('btn-nueva-tarea').addEventListener('click', () => {
+        document.getElementById('form-nueva-tarea').classList.toggle('hidden');
+        document.getElementById('nueva-tarea-fecha').valueAsDate = new Date(); // Pone la fecha de hoy por defecto
+    });
+
+    document.getElementById('btn-guardar-tarea').addEventListener('click', async () => {
+        const nombre = document.getElementById('nueva-tarea-nombre').value;
+        const asignadoA = document.getElementById('nueva-tarea-asignado').value;
+        const fecha = document.getElementById('nueva-tarea-fecha').value;
+        
+        if(!nombre || !fecha) return alert('El nombre y la fecha son obligatorios');
+        document.getElementById('btn-guardar-tarea').innerText = 'Guardando...';
+
+        // Guardamos la tarea en el catálogo y la asignamos
+        const { data: catalogo } = await supabase.from('tareas_catalogo')
+            .insert([{ familia_id: familiaId, nombre: nombre }]).select().single();
+        
+        await supabase.from('tareas_asignadas')
+            .insert([{ familia_id: familiaId, tarea_id: catalogo.id, asignado_a: asignadoA || null, fecha_objetivo: fecha }]);
+        
+        // Refrescamos la vista
+        document.getElementById('form-nueva-tarea').classList.add('hidden');
+        document.getElementById('btn-guardar-tarea').innerText = 'Guardar Tarea';
+        document.getElementById('nueva-tarea-nombre').value = '';
+        cargarListaTareas(familiaId, miembros);
+    });
+}
+
+async function cargarListaTareas(familiaId, miembros) {
+    const lista = document.getElementById('lista-tareas');
+    
+    // Traemos las tareas pendientes
+    const { data: tareas } = await supabase
+        .from('tareas_asignadas')
+        .select('id, fecha_objetivo, estado, asignado_a, tareas_catalogo(nombre)')
+        .eq('familia_id', familiaId)
+        .eq('estado', 'Pendiente')
+        .order('fecha_objetivo', { ascending: true });
+
+    if(!tareas || tareas.length === 0) {
+        lista.innerHTML = '<p style="text-align:center; color:var(--text-muted); margin-top:20px;">¡Todo limpio! No hay tareas pendientes.</p>';
+        return;
+    }
+
+    lista.innerHTML = tareas.map(t => {
+        const nombreAsignado = miembros.find(m => m.id === t.asignado_a)?.nombre || 'Cualquiera (Bolsa común)';
+        const fechaFormateada = new Date(t.fecha_objetivo).toLocaleDateString('es-ES');
+        
+        return `
+        <div style="background:white; padding:15px; border-radius:8px; margin-bottom:10px; border:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <strong style="display:block; margin-bottom:4px;">${t.tareas_catalogo.nombre}</strong>
+                <small style="color:var(--text-muted);">📅 ${fechaFormateada} | 👤 ${nombreAsignado}</small>
+            </div>
+            <button onclick="completarTarea('${t.id}')" class="btn-primary" style="width:40px; height:40px; padding:0; border-radius:8px;">✓</button>
+        </div>
+        `;
+    }).join('');
+}
+
+// Hacemos global la función de completar para que el HTML pueda llamarla
+window.completarTarea = async function(tareaId) {
+    await supabase.from('tareas_asignadas').update({ estado: 'Completada' }).eq('id', tareaId);
+    document.querySelector('[data-target="tareas"]').click(); 
 }
