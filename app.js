@@ -28,6 +28,8 @@ const btnSubmit = document.getElementById('btn-login');
 const btnAuthMode = document.getElementById('btn-auth-mode');
 const btnResetPassword = document.getElementById('btn-reset-password');
 const authMessage = document.getElementById('auth-message');
+const passwordUpdateForm = document.getElementById('password-update-form');
+const passwordUpdateError = document.getElementById('password-update-error');
 
 const onboardingForm = document.getElementById('onboarding-form');
 const btnOnboarding = document.getElementById('btn-onboarding');
@@ -38,6 +40,8 @@ const navItems = document.querySelectorAll('.nav-item');
 let currentUser = null;
 let currentProfile = null;
 let authMode = 'login';
+let currentView = 'dashboard';
+let viewRenderId = 0;
 
 function getStorageKey(key) {
     const owner = currentProfile?.familia_id || currentUser?.id || 'anonymous';
@@ -46,7 +50,16 @@ function getStorageKey(key) {
 
 function readFromStorage(key, fallback) {
     try {
-        const value = localStorage.getItem(getStorageKey(key));
+        const storageKey = getStorageKey(key);
+        let value = localStorage.getItem(storageKey);
+        if (!value && currentProfile?.familia_id && currentUser?.id) {
+            const legacyKey = `${key}-${currentUser.id}`;
+            value = localStorage.getItem(legacyKey);
+            if (value) {
+                localStorage.setItem(storageKey, value);
+                localStorage.removeItem(legacyKey);
+            }
+        }
         return value ? JSON.parse(value) : fallback;
     } catch (error) {
         console.warn('No se pudo leer el estado local:', error);
@@ -57,8 +70,10 @@ function readFromStorage(key, fallback) {
 function saveToStorage(key, value) {
     try {
         localStorage.setItem(getStorageKey(key), JSON.stringify(value));
+        return true;
     } catch (error) {
         console.error('No se pudo guardar el estado local:', error);
+        return false;
     }
 }
 
@@ -71,10 +86,15 @@ function getAppState() {
 }
 
 function saveAppState(state) {
-    saveToStorage(STORAGE_KEYS.app, state);
+    if (saveToStorage(STORAGE_KEYS.app, state)) return true;
+    showContentError('No se pudo guardar en este dispositivo. Comprueba el espacio disponible y los permisos del navegador.');
+    return false;
 }
 
 function setCurrentUser(user) {
+    if (currentUser?.id !== user?.id) {
+        viewRenderId += 1;
+    }
     currentUser = user;
     currentProfile = null;
 }
@@ -142,6 +162,42 @@ btnResetPassword.addEventListener('click', async () => {
         showAuthError(`No se pudo solicitar el restablecimiento: ${error.message}`);
     } finally {
         btnResetPassword.disabled = false;
+    }
+});
+
+passwordUpdateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    passwordUpdateError.classList.add('hidden');
+    const password = document.getElementById('new-password').value;
+    const confirmation = document.getElementById('confirm-password').value;
+    if (password !== confirmation) {
+        passwordUpdateError.innerText = 'Las contraseñas no coinciden.';
+        passwordUpdateError.classList.remove('hidden');
+        return;
+    }
+
+    const submitButton = passwordUpdateForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.innerText = 'Actualizando...';
+    try {
+        const { data, error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        passwordUpdateForm.reset();
+        passwordUpdateForm.classList.add('hidden');
+        authForm.classList.remove('hidden');
+        document.querySelector('.auth-actions').classList.remove('hidden');
+        if (data.user) {
+            setCurrentUser(data.user);
+            await mostrarApp();
+        } else {
+            showAuthMessage('Contraseña actualizada. Ya puedes iniciar sesión.');
+        }
+    } catch (error) {
+        passwordUpdateError.innerText = `No se pudo actualizar la contraseña: ${error.message}`;
+        passwordUpdateError.classList.remove('hidden');
+    } finally {
+        submitButton.disabled = false;
+        submitButton.innerText = 'Actualizar contraseña';
     }
 });
 
@@ -312,21 +368,28 @@ navItems.forEach((item) => {
         navItems.forEach((nav) => nav.setAttribute('aria-current', nav === item ? 'page' : 'false'));
 
         const targetView = item.getAttribute('data-target');
-        const titles = { dashboard: 'Resumen', tareas: 'Tareas', menus: 'Menú', compra: 'Compra' };
-        viewTitle.innerText = titles[targetView] || 'Resumen';
         renderizarVista(targetView);
     });
 });
 
 async function renderizarVista(vista) {
+    currentView = vista;
+    const titles = { dashboard: 'Resumen', tareas: 'Tareas', menus: 'Menú', compra: 'Compra' };
+    viewTitle.innerText = titles[vista] || 'Resumen';
+    navItems.forEach((item) => {
+        const active = item.getAttribute('data-target') === vista;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    const renderId = ++viewRenderId;
     mainContent.innerHTML = '<p class="empty-state">Cargando...</p>';
     try {
         switch (vista) {
             case 'dashboard':
-                await renderDashboard();
+                await renderDashboard(renderId);
                 break;
             case 'tareas':
-                await cargarVistaTareas();
+                await cargarVistaTareas(renderId);
                 break;
             case 'menus':
                 renderMenuView();
@@ -335,10 +398,13 @@ async function renderizarVista(vista) {
                 renderCompraView();
                 break;
             default:
-                await renderDashboard();
+                currentView = 'dashboard';
+                await renderDashboard(renderId);
         }
     } catch (error) {
-        showContentError(`No se pudieron cargar los datos: ${error.message}`);
+        if (renderId === viewRenderId) {
+            showContentError(`No se pudieron cargar los datos: ${error.message}`);
+        }
     }
 }
 
@@ -380,8 +446,9 @@ async function fetchFamilyData() {
     };
 }
 
-async function renderDashboard() {
+async function renderDashboard(renderId) {
     const [{ family, members, tasks }, localState] = await Promise.all([fetchFamilyData(), getAppState()]);
+    if (renderId !== viewRenderId) return;
     const pendingTasks = tasks.filter((task) => task.estado !== 'Completada');
     const nextTask = pendingTasks[0];
     const nextTaskText = nextTask
@@ -413,23 +480,27 @@ async function renderDashboard() {
         </div>`;
 }
 
-async function cargarVistaTareas() {
+async function cargarVistaTareas(renderId) {
     const { members, tasks } = await fetchFamilyData();
+    if (renderId !== viewRenderId) return;
     mainContent.innerHTML = `
         <div class="section-header">
             <h3>Tareas de la Tribu</h3>
             <button id="btn-nueva-tarea" class="btn-primary btn-inline">+ Asignar</button>
         </div>
 
-        <div id="form-nueva-tarea" class="panel hidden">
+        <form id="form-nueva-tarea" class="panel hidden">
+            <label for="nueva-tarea-nombre">Tarea</label>
             <input type="text" id="nueva-tarea-nombre" placeholder="Ej. Fregar los platos" maxlength="120" required>
+            <label for="nueva-tarea-asignado">Asignar a</label>
             <select id="nueva-tarea-asignado" class="input-select">
                 <option value="">Bolsa común (Cualquiera)</option>
                 ${members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.nombre)}</option>`).join('')}
             </select>
+            <label for="nueva-tarea-fecha">Fecha límite</label>
             <input type="date" id="nueva-tarea-fecha" class="input-select" required>
-            <button id="btn-guardar-tarea" class="btn-primary">Guardar Tarea</button>
-        </div>
+            <button id="btn-guardar-tarea" type="submit" class="btn-primary">Guardar Tarea</button>
+        </form>
 
         <div id="lista-tareas" class="task-list"></div>
     `;
@@ -462,26 +533,33 @@ async function cargarVistaTareas() {
         const form = document.getElementById('form-nueva-tarea');
         form.classList.toggle('hidden');
         const fechaInput = document.getElementById('nueva-tarea-fecha');
-        fechaInput.valueAsDate = new Date();
+        const today = getLocalDateInputValue();
+        fechaInput.min = today;
+        fechaInput.value = today;
     });
 
     lista.querySelectorAll('[data-complete-task]').forEach((button) => {
         button.addEventListener('click', async () => {
             button.disabled = true;
-            const { error } = await supabase.from('tareas_asignadas')
-                .update({ estado: 'Completada' })
-                .eq('id', button.dataset.completeTask)
-                .eq('familia_id', currentProfile.familia_id);
-            if (error) {
+            try {
+                const { data, error } = await supabase.from('tareas_asignadas')
+                    .update({ estado: 'Completada' })
+                    .eq('id', button.dataset.completeTask)
+                    .eq('familia_id', currentProfile.familia_id)
+                    .select('id')
+                    .maybeSingle();
+                if (error) throw error;
+                if (!data) throw new Error('La tarea ya no existe o no tienes permiso para modificarla.');
+                await renderizarVista(currentView);
+            } catch (error) {
                 button.disabled = false;
                 showContentError(`No se pudo completar la tarea: ${error.message}`);
-                return;
             }
-            await renderizarVista('tareas');
         });
     });
 
-    document.getElementById('btn-guardar-tarea').addEventListener('click', async () => {
+    document.getElementById('form-nueva-tarea').addEventListener('submit', async (event) => {
+        event.preventDefault();
         const button = document.getElementById('btn-guardar-tarea');
         const nombre = document.getElementById('nueva-tarea-nombre').value.trim();
         const asignadoA = document.getElementById('nueva-tarea-asignado').value || null;
@@ -507,15 +585,34 @@ async function cargarVistaTareas() {
                     tarea_id: catalog.id,
                     asignado_a: asignadoA,
                     fecha_objetivo: fecha,
-                });
-            if (assignmentError) throw assignmentError;
-            await renderizarVista('tareas');
+                })
+                .select('id')
+                .single();
+            if (assignmentError) {
+                const { error: cleanupError } = await supabase.from('tareas_catalogo')
+                    .delete()
+                    .eq('id', catalog.id)
+                    .eq('familia_id', currentProfile.familia_id);
+                if (cleanupError) {
+                    throw new Error(`No se pudo asignar la tarea (${assignmentError.message}) y tampoco limpiar la entrada de catálogo (${cleanupError.message}).`);
+                }
+                throw assignmentError;
+            }
+            await renderizarVista(currentView);
         } catch (error) {
             showContentError(`No se pudo guardar la tarea: ${error.message}`);
             button.disabled = false;
             button.innerText = 'Guardar Tarea';
         }
+
     });
+}
+
+function getLocalDateInputValue(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function renderMenuView() {
@@ -584,7 +681,7 @@ function renderMenuView() {
 
         const state = getAppState();
         state.menu.push({ id: crypto.randomUUID(), nombre, dia });
-        saveAppState(state);
+        if (!saveAppState(state)) return;
         document.getElementById('menu-form').reset();
         renderMenuView();
     });
@@ -593,7 +690,7 @@ function renderMenuView() {
         button.addEventListener('click', () => {
             const state = getAppState();
             state.menu = state.menu.filter((item) => item.id !== button.dataset.deleteMenu);
-            saveAppState(state);
+            if (!saveAppState(state)) return;
             renderMenuView();
         });
     });
@@ -676,7 +773,7 @@ function renderCompraView() {
             return;
         }
         state.shopping.push({ id: crypto.randomUUID(), nombre, comprado: false });
-        saveAppState(state);
+        if (!saveAppState(state)) return;
         renderCompraView();
     });
 
@@ -687,7 +784,7 @@ function renderCompraView() {
             state.shopping = state.shopping.map((item) => item.id === input.dataset.toggleShopping
                 ? { ...item, comprado: input.checked }
                 : item);
-            saveAppState(state);
+            if (!saveAppState(state)) return;
             renderCompraView();
         });
     });
@@ -696,7 +793,7 @@ function renderCompraView() {
         button.addEventListener('click', () => {
             const state = getAppState();
             state.shopping = state.shopping.filter((item) => item.id !== button.dataset.deleteShopping);
-            saveAppState(state);
+            if (!saveAppState(state)) return;
             renderCompraView();
         });
     });
@@ -704,9 +801,31 @@ function renderCompraView() {
     document.getElementById('btn-limpiar-comprados')?.addEventListener('click', () => {
         const state = getAppState();
         state.shopping = state.shopping.filter((item) => !item.comprado);
-        saveAppState(state);
+        if (!saveAppState(state)) return;
         renderCompraView();
     });
 }
+
+supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+        setCurrentUser(session?.user || null);
+        authView.classList.remove('hidden');
+        onboardingView.classList.add('hidden');
+        appView.classList.add('hidden');
+        authForm.classList.add('hidden');
+        document.querySelector('.auth-actions').classList.add('hidden');
+        passwordUpdateForm.classList.remove('hidden');
+        passwordUpdateError.classList.add('hidden');
+        return;
+    }
+
+    if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        currentProfile = null;
+        authView.classList.remove('hidden');
+        onboardingView.classList.add('hidden');
+        appView.classList.add('hidden');
+    }
+});
 
 checkSession();

@@ -27,6 +27,15 @@
                 <button type="button" id="btn-auth-mode" class="text-button">¿No tienes cuenta? Regístrate</button>
                 <button type="button" id="btn-reset-password" class="text-button">He olvidado mi contraseña</button>
             </div>
+            <form id="password-update-form" class="hidden">
+                <h2>Elige una contraseña nueva</h2>
+                <label for="new-password">Nueva contraseña</label>
+                <input type="password" id="new-password" autocomplete="new-password" minlength="6" required>
+                <label for="confirm-password">Repite la contraseña</label>
+                <input type="password" id="confirm-password" autocomplete="new-password" minlength="6" required>
+                <button type="submit" class="btn-primary">Actualizar contraseña</button>
+                <p id="password-update-error" class="error-text hidden" role="alert"></p>
+            </form>
         </div>
     </div>
 
