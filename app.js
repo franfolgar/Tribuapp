@@ -911,18 +911,24 @@ function validateBackup(backup) {
         throw new Error(`Cada lista admite como máximo ${MAX_BACKUP_ITEMS} elementos.`);
     }
 
+    const shoppingIds = new Set();
     const shopping = backup.shopping.map((item) => {
         if (!item || typeof item.id !== 'string' || !item.id || typeof item.nombre !== 'string' ||
-            !item.nombre.trim() || item.nombre.length > 120 || typeof item.comprado !== 'boolean') {
+            item.id.length > 128 || shoppingIds.has(item.id) || !item.nombre.trim() ||
+            item.nombre.length > 120 || typeof item.comprado !== 'boolean') {
             throw new Error('La copia contiene un producto con datos no válidos.');
         }
+        shoppingIds.add(item.id);
         return { id: item.id, nombre: item.nombre.trim(), comprado: item.comprado };
     });
+    const menuIds = new Set();
     const menu = backup.menu.map((item) => {
         if (!item || typeof item.id !== 'string' || !item.id || typeof item.nombre !== 'string' ||
-            !item.nombre.trim() || item.nombre.length > 120 || !WEEK_DAYS.includes(item.dia)) {
+            item.id.length > 128 || menuIds.has(item.id) || !item.nombre.trim() ||
+            item.nombre.length > 120 || !WEEK_DAYS.includes(item.dia)) {
             throw new Error('La copia contiene un plato con datos no válidos.');
         }
+        menuIds.add(item.id);
         return { id: item.id, nombre: item.nombre.trim(), dia: item.dia };
     });
 
