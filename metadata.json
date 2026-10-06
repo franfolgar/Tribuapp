@@ -1,0 +1,7 @@
+{
+  "name": "Tribuapp - Gestión Familiar",
+  "description": "Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
