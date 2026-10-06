@@ -208,6 +208,8 @@ const viewTitle = document.getElementById('view-title');
 const headerTribeBadge = document.getElementById('header-tribe-badge');
 
 const authForm = document.getElementById('auth-form');
+const authNameGroup = document.getElementById('auth-name-group');
+const authMemberNameInput = document.getElementById('auth-member-name');
 const authError = document.getElementById('auth-error');
 const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
@@ -1129,10 +1131,19 @@ function getPublicAppUrl() {
 
 function getPendingInvite() {
     try {
-        const params = new URLSearchParams(window.location.search);
-        const join = params.get('join');
-        const code = params.get('code');
-        const tribu = params.get('tribu');
+        let params = new URLSearchParams(window.location.search);
+        let join = params.get('join');
+        let code = params.get('code');
+        let tribu = params.get('tribu');
+
+        if (!join && !code && window.location.hash && window.location.hash.includes('?')) {
+            const hashSearch = window.location.hash.substring(window.location.hash.indexOf('?'));
+            params = new URLSearchParams(hashSearch);
+            join = params.get('join');
+            code = params.get('code');
+            tribu = params.get('tribu');
+        }
+
         if (join || code) {
             const invite = {
                 familyId: join || '',
@@ -1147,6 +1158,37 @@ function getPendingInvite() {
     } catch {
         return null;
     }
+}
+
+function setupInviteAuthUI(pendingInvite) {
+    authMode = 'invite_join';
+    if (inviteWelcomeBanner && inviteWelcomeText) {
+        inviteWelcomeText.innerHTML = `<strong>👋 ¡Bienvenido/a a la tribu "${escapeHtml(pendingInvite.tribuName)}"!</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95;">Crea tu acceso para unirte a la familia en 1 clic:</span>`;
+        inviteWelcomeBanner.classList.remove('hidden');
+    }
+    if (authNameGroup) {
+        authNameGroup.classList.remove('hidden');
+        if (authMemberNameInput) authMemberNameInput.required = true;
+    }
+    btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+    btnSubmit.style.background = 'linear-gradient(135deg, #10B981, #059669)';
+    btnAuthMode.innerText = '¿Ya tienes cuenta en Tribuapp? Inicia sesión aquí';
+    btnDemoLogin?.classList.add('hidden');
+    btnResetPassword?.classList.add('hidden');
+    authError?.classList.add('hidden');
+    authMessage?.classList.add('hidden');
+}
+
+function resetStandardAuthUI() {
+    if (inviteWelcomeBanner) inviteWelcomeBanner.classList.add('hidden');
+    if (authNameGroup) {
+        authNameGroup.classList.add('hidden');
+        if (authMemberNameInput) authMemberNameInput.required = false;
+    }
+    btnSubmit.style.background = '';
+    btnDemoLogin?.classList.remove('hidden');
+    btnResetPassword?.classList.remove('hidden');
+    updateAuthMode(authMode === 'signup' ? 'signup' : 'login');
 }
 
 // --- Session & Auth ---
@@ -1194,6 +1236,7 @@ function updateAuthMode(mode) {
     authMode = mode;
     const isSignup = mode === 'signup';
     btnSubmit.innerText = isSignup ? 'Crear cuenta' : 'Iniciar sesión';
+    btnSubmit.style.background = '';
     passwordInput.autocomplete = isSignup ? 'new-password' : 'current-password';
     btnAuthMode.innerText = isSignup ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate';
     btnResetPassword.classList.toggle('hidden', isSignup);
@@ -1202,6 +1245,23 @@ function updateAuthMode(mode) {
 }
 
 btnAuthMode.addEventListener('click', () => {
+    const pendingInvite = getPendingInvite();
+    if (pendingInvite) {
+        if (authMode === 'invite_join') {
+            authMode = 'login';
+            authNameGroup?.classList.add('hidden');
+            if (authMemberNameInput) authMemberNameInput.required = false;
+            btnSubmit.innerText = `Iniciar sesión y entrar a ${pendingInvite.tribuName}`;
+            btnSubmit.style.background = '';
+            btnAuthMode.innerText = '¿Es tu primera vez? Crea tu acceso para unirte';
+            btnResetPassword?.classList.remove('hidden');
+        } else {
+            setupInviteAuthUI(pendingInvite);
+        }
+        authError.classList.add('hidden');
+        authMessage.classList.add('hidden');
+        return;
+    }
     updateAuthMode(authMode === 'login' ? 'signup' : 'login');
 });
 
@@ -1279,42 +1339,103 @@ authForm.addEventListener('submit', async (event) => {
     authError.classList.add('hidden');
     authMessage.classList.add('hidden');
     btnSubmit.disabled = true;
-    btnSubmit.innerText = authMode === 'signup' ? 'Creando cuenta...' : 'Iniciando sesión...';
 
     const email = emailInput.value.trim().toLowerCase();
     const password = passwordInput.value;
+    const memberName = authMemberNameInput?.value.trim() || '';
+    const pendingInvite = getPendingInvite();
 
     if (!email || !password) {
         showAuthError('Debes rellenar correo y contraseña.');
         btnSubmit.disabled = false;
-        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : 'Iniciar sesión';
+        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : (authMode === 'invite_join' ? `✨ Unirme a ${pendingInvite?.tribuName || 'la Tribu'}` : 'Iniciar sesión');
         return;
     }
 
     try {
+        if (pendingInvite && authMode === 'invite_join') {
+            btnSubmit.innerText = `Uniéndote a ${pendingInvite.tribuName}...`;
+            let authUser = null;
+
+            // Intento 1: Registro directo
+            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+            if (!signUpError && signUpData.user) {
+                authUser = signUpData.user;
+            } else if (signUpError) {
+                const msg = (signUpError.message || '').toLowerCase();
+                // Si el correo ya estaba registrado previamente, intentar inicio de sesión con esa contraseña
+                if (msg.includes('already registered') || msg.includes('user already') || signUpError.status === 422) {
+                    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+                    if (signInError) {
+                        throw new Error('Este correo ya está registrado en Tribuapp. Comprueba tu contraseña o pulsa en "¿Ya tienes cuenta? Inicia sesión".');
+                    }
+                    authUser = signInData.user;
+                } else {
+                    throw signUpError;
+                }
+            }
+
+            if (!authUser) {
+                throw new Error('No se pudo autenticar. Por favor, revisa tus datos.');
+            }
+
+            setCurrentUser(authUser);
+
+            // Unión automática instantánea a la familia
+            const joinedFamily = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
+            showToast(`🎉 ¡Bienvenido/a a ${joinedFamily?.nombre || pendingInvite.tribuName}!`);
+            await mostrarApp();
+            return;
+        }
+
         if (authMode === 'signup') {
+            btnSubmit.innerText = 'Creando cuenta...';
             const { data, error } = await supabase.auth.signUp({ email, password });
             if (error) throw error;
 
             if (data.session && data.user) {
                 setCurrentUser(data.user);
+                if (pendingInvite) {
+                    try {
+                        await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
+                    } catch (e) {
+                        console.warn('Auto join error:', e);
+                    }
+                }
                 await mostrarApp();
             } else {
                 updateAuthMode('login');
-                showAuthMessage('Si la cuenta es nueva, revisa tu correo para confirmar la dirección. Si ya tenías cuenta, inicia sesión.');
+                showAuthMessage('Cuenta creada con éxito. Ya puedes iniciar sesión.');
             }
         } else {
+            // Modo login estándar o con invitación
+            btnSubmit.innerText = 'Iniciando sesión...';
             const { data, error } = await supabase.auth.signInWithPassword({ email, password });
             if (error) throw error;
             if (!data.user) throw new Error('Supabase no devolvió el usuario autenticado.');
             setCurrentUser(data.user);
+
+            if (pendingInvite) {
+                try {
+                    const joined = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
+                    showToast(`🎉 ¡Te has unido a ${joined?.nombre || pendingInvite.tribuName}!`);
+                } catch (e) {
+                    console.warn('Auto join error on login:', e);
+                }
+            }
             await mostrarApp();
         }
     } catch (error) {
-        showAuthError(error.message || 'No se pudo completar la operación de autenticación.');
+        showAuthError(error.message || 'No se pudo completar la operación.');
     } finally {
         btnSubmit.disabled = false;
-        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : 'Iniciar sesión';
+        if (pendingInvite && authMode === 'invite_join') {
+            btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+        } else if (authMode === 'signup') {
+            btnSubmit.innerText = 'Crear cuenta';
+        } else {
+            btnSubmit.innerText = 'Iniciar sesión';
+        }
     }
 });
 
@@ -1345,9 +1466,10 @@ async function mostrarApp() {
         authView.classList.remove('hidden');
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
-        if (pendingInvite && inviteWelcomeBanner && inviteWelcomeText) {
-            inviteWelcomeText.innerText = `¡Te han invitado a unirte a "${pendingInvite.tribuName}"! Inicia sesión o regístrate para entrar.`;
-            inviteWelcomeBanner.classList.remove('hidden');
+        if (pendingInvite) {
+            setupInviteAuthUI(pendingInvite);
+        } else {
+            resetStandardAuthUI();
         }
         return;
     }
@@ -1368,10 +1490,25 @@ async function mostrarApp() {
 
     currentProfile = profile;
     if (!profile) {
+        // Si hay una invitación pendiente, unirse automáticamente sin pantallas intermedias
+        if (pendingInvite) {
+            try {
+                const joined = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, getFriendlyUserName());
+                showToast(`🎉 ¡Bienvenido/a a "${joined?.nombre || pendingInvite.tribuName}"!`);
+                onboardingView.classList.add('hidden');
+                appView.classList.remove('hidden');
+                if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+                renderizarVista('dashboard');
+                return;
+            } catch (autoErr) {
+                console.warn('Auto-join failed, mostrando onboarding manual:', autoErr);
+            }
+        }
+
         onboardingView.classList.remove('hidden');
         appView.classList.add('hidden');
 
-        // Pre-configure onboarding based on invite
+        // Pre-configurar onboarding basado en la invitación
         if (pendingInvite) {
             tabJoinTribu?.classList.add('active');
             tabCreateTribu?.classList.remove('active');
@@ -1389,7 +1526,7 @@ async function mostrarApp() {
         return;
     }
 
-    // If user already had a profile and opens a different family invite
+    // Si el usuario ya tenía perfil pero abre un enlace de otra tribu diferente
     if (pendingInvite && pendingInvite.familyId && profile.familia_id !== pendingInvite.familyId) {
         const switchFamily = confirm(`Has recibido una invitación para unirte a la tribu "${pendingInvite.tribuName}". ¿Deseas unirte a esta tribu ahora?`);
         if (switchFamily) {
@@ -1416,7 +1553,7 @@ async function handleJoinTribu(codigoOId, memberName) {
     const cleanInput = String(codigoOId || '').trim();
     if (!cleanInput) throw new Error('Introduce un código de invitación o enlace');
 
-    // 1. Try search by exact UUID if looks like UUID
+    // 1. Búsqueda por UUID exacto
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanInput)) {
         const { data, error } = await supabase
             .from('familias')
@@ -1426,43 +1563,32 @@ async function handleJoinTribu(codigoOId, memberName) {
         if (!error && data) family = data;
     }
 
-    // 2. Try search by TRIBU- prefix
+    // 2. Búsqueda segura por prefijo de código o nombre (en JS para evitar errores de casting en PostgreSQL)
     if (!family) {
-        let prefix = cleanInput.toUpperCase();
-        if (prefix.startsWith('TRIBU-')) {
-            prefix = prefix.replace('TRIBU-', '');
-        }
-        prefix = prefix.toLowerCase();
+        let prefix = cleanInput.toUpperCase().replace('TRIBU-', '').toLowerCase().trim();
+        const { data: allFamilias, error: famError } = await supabase
+            .from('familias')
+            .select('id, nombre, dieta_base');
 
-        if (prefix.length >= 3) {
-            const { data, error } = await supabase
-                .from('familias')
-                .select('id, nombre, dieta_base')
-                .ilike('id', `${prefix}%`)
-                .limit(1);
-            if (!error && data && data.length > 0) {
-                family = data[0];
+        if (!famError && Array.isArray(allFamilias) && allFamilias.length > 0) {
+            if (prefix.length >= 3) {
+                family = allFamilias.find(f => {
+                    const rawId = String(f.id || '').replace(/-/g, '').toLowerCase();
+                    const cleanPref = prefix.replace(/-/g, '');
+                    return rawId.startsWith(cleanPref) || String(f.id || '').toLowerCase().startsWith(prefix);
+                });
+            }
+            if (!family) {
+                family = allFamilias.find(f => f.nombre.toLowerCase().includes(cleanInput.toLowerCase()));
             }
         }
     }
 
-    // 3. Fallback: search by name
     if (!family) {
-        const { data, error } = await supabase
-            .from('familias')
-            .select('id, nombre, dieta_base')
-            .ilike('nombre', `%${cleanInput}%`)
-            .limit(1);
-        if (!error && data && data.length > 0) {
-            family = data[0];
-        }
+        throw new Error('No se encontró ninguna tribu con ese código. Comprueba que el enlace sea el correcto.');
     }
 
-    if (!family) {
-        throw new Error('No se encontró ninguna tribu con ese código. Comprueba que el código o enlace sea correcto.');
-    }
-
-    // Upsert user into usuarios table
+    // Guardar o actualizar usuario en la tabla usuarios vinculándolo a la familia
     const { data: profile, error: profileError } = await supabase
         .from('usuarios')
         .upsert({
