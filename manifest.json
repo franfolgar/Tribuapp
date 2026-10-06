@@ -1,29 +1,29 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "Tribuapp - Gestión Familiar",
   "short_name": "Tribuapp",
   "description": "Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "theme_color": "#4F46E5",
   "background_color": "#EEF2FF",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-maskable.png",
+      "src": "icon-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
