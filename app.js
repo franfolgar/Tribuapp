@@ -13,6 +13,10 @@ const defaultState = {
     shopping: [],
     menu: [],
 };
+const WEEK_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Fin de semana'];
+const BACKUP_VERSION = 1;
+const MAX_BACKUP_FILE_SIZE = 1_000_000;
+const MAX_BACKUP_ITEMS = 500;
 
 const authView = document.getElementById('auth-view');
 const onboardingView = document.getElementById('onboarding-view');
@@ -319,6 +323,7 @@ onboardingForm.addEventListener('submit', async (event) => {
         return;
     }
 
+    let createdFamilyId = null;
     try {
         const { data: family, error: familyError } = await supabase
             .from('familias')
@@ -331,6 +336,7 @@ onboardingForm.addEventListener('submit', async (event) => {
             .single();
 
         if (familyError) throw familyError;
+        createdFamilyId = family.id;
 
         const { data: profile, error: profileError } = await supabase
             .from('usuarios')
@@ -346,7 +352,24 @@ onboardingForm.addEventListener('submit', async (event) => {
         if (profileError) throw profileError;
         currentProfile = profile;
     } catch (error) {
-        onboardingError.innerText = `No se pudo crear la tribu: ${error.message}`;
+        let message = `No se pudo crear la tribu: ${error.message}`;
+        if (createdFamilyId) {
+            try {
+                const { data: deletedFamily, error: cleanupError } = await supabase
+                    .from('familias')
+                    .delete()
+                    .eq('id', createdFamilyId)
+                    .select('id')
+                    .maybeSingle();
+                if (cleanupError) throw cleanupError;
+                if (!deletedFamily) {
+                    throw new Error('Supabase no confirmó la eliminación de la familia.');
+                }
+            } catch (cleanupError) {
+                message += ` No se pudo eliminar la familia incompleta (${cleanupError.message}); contacta con el administrador antes de volver a intentarlo.`;
+            }
+        }
+        onboardingError.innerText = message;
         onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
         btnOnboarding.innerText = 'Crear Tribu';
@@ -632,12 +655,7 @@ function renderMenuView() {
             <input type="text" id="menu-nombre" placeholder="Ej. Risotto de setas" maxlength="120" required>
             <label for="menu-dia">Día</label>
             <select id="menu-dia" class="input-select">
-                <option value="Lunes">Lunes</option>
-                <option value="Martes">Martes</option>
-                <option value="Miércoles">Miércoles</option>
-                <option value="Jueves">Jueves</option>
-                <option value="Viernes">Viernes</option>
-                <option value="Fin de semana">Fin de semana</option>
+                ${WEEK_DAYS.map((day) => `<option value="${day}">${day}</option>`).join('')}
             </select>
             <div class="form-actions">
                 <button type="submit" class="btn-primary">Guardar plato</button>
@@ -657,6 +675,7 @@ function renderMenuView() {
             `).join('') : '<p class="empty-state">Todavía no hay platos. Añade ideas para planificar la semana.</p>'}
         </div>
     `;
+    addBackupControls(mainContent);
 
     document.getElementById('btn-agregar-menu').addEventListener('click', () => {
         const form = document.getElementById('menu-form');
@@ -745,6 +764,7 @@ function renderCompraView() {
                 <button id="btn-limpiar-comprados" class="btn-secondary">Quitar comprados</button>
             </details>` : ''}
     `;
+    addBackupControls(mainContent);
 
     document.getElementById('btn-agregar-compra').addEventListener('click', () => {
         const form = document.getElementById('shop-form');
@@ -804,6 +824,109 @@ function renderCompraView() {
         if (!saveAppState(state)) return;
         renderCompraView();
     });
+}
+
+function addBackupControls(container) {
+    container.insertAdjacentHTML('beforeend', `
+        <section class="panel backup-panel" aria-labelledby="backup-title">
+            <h4 id="backup-title">Copia de seguridad</h4>
+            <p>El menú y la compra se guardan en este dispositivo. Descarga una copia para conservarlos o moverlos.</p>
+            <div class="form-actions">
+                <button type="button" id="btn-export-backup" class="btn-secondary">Descargar copia</button>
+                <button type="button" id="btn-import-backup" class="btn-secondary">Restaurar copia</button>
+            </div>
+            <input type="file" id="input-backup" accept="application/json,.json" class="hidden">
+            <p id="backup-status" class="backup-status" role="status" aria-live="polite"></p>
+        </section>
+    `);
+
+    const fileInput = document.getElementById('input-backup');
+    const status = document.getElementById('backup-status');
+
+    document.getElementById('btn-export-backup').addEventListener('click', () => {
+        try {
+            const backup = {
+                version: BACKUP_VERSION,
+                exportedAt: new Date().toISOString(),
+                ...getAppState(),
+            };
+            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `tribuapp-copia-${getLocalDateInputValue()}.json`;
+            link.click();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            status.innerText = 'Copia descargada.';
+        } catch (error) {
+            status.innerText = `No se pudo descargar la copia: ${error.message}`;
+        }
+    });
+
+    document.getElementById('btn-import-backup').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+        const [file] = fileInput.files || [];
+        if (!file) return;
+        status.classList.remove('error-text');
+        try {
+            if (file.size > MAX_BACKUP_FILE_SIZE) {
+                throw new Error('El archivo supera el límite de 1 MB.');
+            }
+            const backup = JSON.parse(await file.text());
+            const restoredState = validateBackup(backup);
+            if (!window.confirm('Restaurar una copia sustituirá el menú y la lista de compra actuales de esta tribu. ¿Quieres continuar?')) {
+                status.innerText = 'Restauración cancelada.';
+                return;
+            }
+            if (!saveAppState(restoredState)) {
+                status.innerText = 'No se pudo guardar la copia en este dispositivo.';
+                status.classList.add('error-text');
+                return;
+            }
+            if (currentView === 'menus') renderMenuView();
+            if (currentView === 'compra') renderCompraView();
+            const refreshedStatus = document.getElementById('backup-status');
+            refreshedStatus.innerText = 'Copia restaurada correctamente.';
+        } catch (error) {
+            const currentStatus = document.getElementById('backup-status');
+            currentStatus.innerText = `No se pudo restaurar la copia: ${error.message}`;
+            currentStatus.classList.add('error-text');
+        } finally {
+            fileInput.value = '';
+        }
+    });
+}
+
+function validateBackup(backup) {
+    if (!backup || typeof backup !== 'object' || Array.isArray(backup)) {
+        throw new Error('El contenido no es un archivo de copia válido.');
+    }
+    if (backup.version !== BACKUP_VERSION) {
+        throw new Error('La versión de la copia no es compatible.');
+    }
+    if (!Array.isArray(backup.shopping) || !Array.isArray(backup.menu)) {
+        throw new Error('La copia debe incluir las listas del menú y la compra.');
+    }
+    if (backup.shopping.length > MAX_BACKUP_ITEMS || backup.menu.length > MAX_BACKUP_ITEMS) {
+        throw new Error(`Cada lista admite como máximo ${MAX_BACKUP_ITEMS} elementos.`);
+    }
+
+    const shopping = backup.shopping.map((item) => {
+        if (!item || typeof item.id !== 'string' || !item.id || typeof item.nombre !== 'string' ||
+            !item.nombre.trim() || item.nombre.length > 120 || typeof item.comprado !== 'boolean') {
+            throw new Error('La copia contiene un producto con datos no válidos.');
+        }
+        return { id: item.id, nombre: item.nombre.trim(), comprado: item.comprado };
+    });
+    const menu = backup.menu.map((item) => {
+        if (!item || typeof item.id !== 'string' || !item.id || typeof item.nombre !== 'string' ||
+            !item.nombre.trim() || item.nombre.length > 120 || !WEEK_DAYS.includes(item.dia)) {
+            throw new Error('La copia contiene un plato con datos no válidos.');
+        }
+        return { id: item.id, nombre: item.nombre.trim(), dia: item.dia };
+    });
+
+    return { shopping, menu };
 }
 
 supabase.auth.onAuthStateChange((event, session) => {

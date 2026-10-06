@@ -302,6 +302,23 @@ input:focus,
     margin-top: 5px;
 }
 
+.backup-panel p {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 14px;
+}
+
+.backup-status {
+    min-height: 20px;
+    margin: 10px 0 0;
+    font-size: 13px;
+}
+
+.backup-status.error-text {
+    color: var(--danger);
+}
+
 .panel h4 {
     margin-bottom: 12px;
     font-size: 1.05rem;
