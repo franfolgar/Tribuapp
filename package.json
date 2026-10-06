@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js",
-    "build": "node -e \"console.log('Build complete')\""
+    "dev": "node --env-file-if-exists=.env server.js",
+    "start": "node --env-file-if-exists=.env server.js",
+    "build": "node -e \"console.log('Build complete')\"",
+    "lint": "node --check app.js server.js"
   },
   "dependencies": {
+    "@google/genai": "^2.27.0",
     "express": "^4.21.2"
   }
 }

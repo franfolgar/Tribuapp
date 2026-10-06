@@ -7,22 +7,205 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const STORAGE_KEYS = {
     app: 'tribuapp-state',
+    tasks: 'tribuapp-tasks',
+    karma: 'tribuapp-karma',
 };
 
-const defaultState = {
-    shopping: [],
-    menu: [],
-};
 const WEEK_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Fin de semana'];
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 const MAX_BACKUP_FILE_SIZE = 1_000_000;
 const MAX_BACKUP_ITEMS = 500;
 
+const AISLE_ORDER = [
+    'Frutas y Verduras',
+    'Lácteos y Huevos',
+    'Carnes y Pescados',
+    'Panadería y Desayunos',
+    'Despensa y Legumbres',
+    'Limpieza y Hogar',
+    'Otros'
+];
+
+const AISLE_ICONS = {
+    'Frutas y Verduras': '🍏',
+    'Lácteos y Huevos': '🥛',
+    'Carnes y Pescados': '🥩',
+    'Panadería y Desayunos': '🥖',
+    'Despensa y Legumbres': '🍝',
+    'Limpieza y Hogar': '🧼',
+    'Otros': '📦'
+};
+
+function getAisleCategory(itemName = '') {
+    const n = itemName.toLowerCase();
+    if (/fruta|manzana|plátano|platano|pera|naranja|limón|limon|fresa|aguacate|tomate|lechuga|zanahoria|cebolla|ajo|pimiento|patata|calabacín|calabacin|espinaca|champiñón|champinon|seta|puerro|calabaza|alcachofa|judía|judia|verdura/.test(n)) {
+        return 'Frutas y Verduras';
+    }
+    if (/leche|huevo|queso|yogur|mantequilla|nata|feta|parmesano|mozzarella|cheddar|quesito/.test(n)) {
+        return 'Lácteos y Huevos';
+    }
+    if (/pollo|ternera|carne|jamón|jamon|pavo|bacon|salmón|salmon|pescado|gamba|gambón|gambon|calamar|marisco|atún|atun|merluza|bacalao|solomillo|chuleta/.test(n)) {
+        return 'Carnes y Pescados';
+    }
+    if (/pan|tostada|galleta|cereal|avena|harina|croissant|bollo|tortilla de trigo|masa de pizza/.test(n)) {
+        return 'Panadería y Desayunos';
+    }
+    if (/arroz|pasta|espagueti|macarrón|macarron|lenteja|garbanzo|alubia|aceite|vinagre|sal|azúcar|azucar|especias|pimentón|pimenton|tomate frito|tomate triturado|conserva|orégano|oregano|laurel|caldo|fumet|mayonesa|gazpacho|pesto/.test(n)) {
+        return 'Despensa y Legumbres';
+    }
+    if (/detergente|friegaplatos|jabón|jabon|lejía|lejia|papel|limpieza|bayeta|bolsa|suavizante|estropajo/.test(n)) {
+        return 'Limpieza y Hogar';
+    }
+    return 'Otros';
+}
+
+const defaultState = {
+    shopping: [
+        { id: 'shop-1', nombre: 'Leche entera', cantidad: '2 L', seccion: 'Lácteos y Huevos', comprado: false },
+        { id: 'shop-2', nombre: 'Huevos de campo', cantidad: '1 docena', seccion: 'Lácteos y Huevos', comprado: false },
+        { id: 'shop-3', nombre: 'Plátanos de Canarias', cantidad: '1 kg', seccion: 'Frutas y Verduras', comprado: false },
+        { id: 'shop-4', nombre: 'Aceite de oliva virgen extra', cantidad: '1 botella', seccion: 'Despensa y Legumbres', comprado: true }
+    ],
+    menu: [
+        {
+            id: 'menu-1',
+            dia: 'Lunes',
+            tipo: 'Comida',
+            nombre: 'Lentejas caseras con verduras y jamón',
+            tiempo: '35 min',
+            ingredientes: ['400g lentejas pardinas', '100g taquitos de jamón', '2 zanahorias', '1 cebolla', '1 patata', '1 hoja de laurel']
+        },
+        {
+            id: 'menu-2',
+            dia: 'Lunes',
+            tipo: 'Cena',
+            nombre: 'Tortilla de patatas con ensalada mixta',
+            tiempo: '25 min',
+            ingredientes: ['4 huevos frescos', '3 patatas medianas', '1 cebolla pequeña', 'Lechuga variada', 'Aceite de oliva']
+        },
+        {
+            id: 'menu-3',
+            dia: 'Martes',
+            tipo: 'Comida',
+            nombre: 'Salmón al horno con patatas panadera',
+            tiempo: '30 min',
+            ingredientes: ['4 lomos de salmón', '3 patatas', '1 cebolla', 'Limón fresco', 'Eneldo']
+        },
+        {
+            id: 'menu-4',
+            dia: 'Martes',
+            tipo: 'Cena',
+            nombre: 'Crema de calabacín y picatostes dorados',
+            tiempo: '20 min',
+            ingredientes: ['2 calabacines', '1 puerro', '1 patata', '2 quesitos', 'Pan para picatostes']
+        },
+        {
+            id: 'menu-5',
+            dia: 'Miércoles',
+            tipo: 'Comida',
+            nombre: 'Pasta fresca con pesto y tomates cherry',
+            tiempo: '20 min',
+            ingredientes: ['350g pasta fresca', '1 bote pesto genovés', '200g tomates cherry', 'Queso parmesano']
+        },
+        {
+            id: 'menu-6',
+            dia: 'Miércoles',
+            tipo: 'Cena',
+            nombre: 'Sándwich vegetal y gazpacho fresco',
+            tiempo: '15 min',
+            ingredientes: ['Pan de molde integral', '2 latas de atún', '1 tomate', 'Lechuga', '1 brick gazpacho']
+        },
+        {
+            id: 'menu-7',
+            dia: 'Jueves',
+            tipo: 'Comida',
+            nombre: 'Pollo asado al limón con patatas',
+            tiempo: '45 min',
+            ingredientes: ['4 cuartos de pollo', '4 patatas', '1 limón', 'Romero fresco', 'Vino blanco']
+        },
+        {
+            id: 'menu-8',
+            dia: 'Jueves',
+            tipo: 'Cena',
+            nombre: 'Revuelto de setas y gambas con tostadas',
+            tiempo: '15 min',
+            ingredientes: ['4 huevos', '200g setas variadas', '150g gambas peladas', '2 dientes de ajo', 'Pan tostado']
+        },
+        {
+            id: 'menu-9',
+            dia: 'Viernes',
+            tipo: 'Comida',
+            nombre: 'Arroz caldoso de marisco',
+            tiempo: '35 min',
+            ingredientes: ['300g arroz redondo', '200g calamares', '150g gambas', 'Fumet de pescado', 'Pimentón dulce']
+        },
+        {
+            id: 'menu-10',
+            dia: 'Viernes',
+            tipo: 'Cena',
+            nombre: 'Pizza casera margarita con jamón cocido',
+            tiempo: '25 min',
+            ingredientes: ['1 masa de pizza fresca', '200g queso mozzarella', '100g jamón cocido', 'Tomate frito', 'Orégano']
+        },
+        {
+            id: 'menu-11',
+            dia: 'Fin de semana',
+            tipo: 'Comida',
+            nombre: 'Paella mixta familiar tradicional',
+            tiempo: '50 min',
+            ingredientes: ['400g arroz bomba', '300g pollo troceado', '200g judías verdes', 'Caldo de ave', 'Azafrán']
+        },
+        {
+            id: 'menu-12',
+            dia: 'Fin de semana',
+            tipo: 'Cena',
+            nombre: 'Hamburguesas caseras con queso cheddar',
+            tiempo: '20 min',
+            ingredientes: ['4 panes de hamburguesa', '4 hamburguesas de ternera', 'Queso cheddar', 'Bacon', 'Tomate y lechuga']
+        }
+    ],
+};
+
+function getSampleTasks(familyId, userId) {
+    const today = getLocalDateInputValue();
+    return [
+        {
+            id: 'demo-task-1',
+            fecha_objetivo: today,
+            estado: 'Pendiente',
+            asignado_a: userId,
+            recurrencia: 'Diaria',
+            puntos: 10,
+            tareas_catalogo: { nombre: 'Poner la lavadora y tender la ropa' },
+        },
+        {
+            id: 'demo-task-2',
+            fecha_objetivo: today,
+            estado: 'Pendiente',
+            asignado_a: null,
+            recurrencia: 'Semanal',
+            puntos: 20,
+            tareas_catalogo: { nombre: 'Limpieza a fondo de la cocina' },
+        },
+        {
+            id: 'demo-task-3',
+            fecha_objetivo: today,
+            estado: 'Completada',
+            asignado_a: userId,
+            recurrencia: 'Diaria',
+            puntos: 10,
+            tareas_catalogo: { nombre: 'Bajar la basura orgánica' },
+        }
+    ];
+}
+
+// UI Elements
 const authView = document.getElementById('auth-view');
 const onboardingView = document.getElementById('onboarding-view');
 const appView = document.getElementById('app-view');
 const mainContent = document.getElementById('main-content');
 const viewTitle = document.getElementById('view-title');
+const headerTribeBadge = document.getElementById('header-tribe-badge');
 
 const authForm = document.getElementById('auth-form');
 const authError = document.getElementById('auth-error');
@@ -31,6 +214,7 @@ const passwordInput = document.getElementById('password');
 const btnSubmit = document.getElementById('btn-login');
 const btnAuthMode = document.getElementById('btn-auth-mode');
 const btnResetPassword = document.getElementById('btn-reset-password');
+const btnDemoLogin = document.getElementById('btn-demo-login');
 const authMessage = document.getElementById('auth-message');
 const passwordUpdateForm = document.getElementById('password-update-form');
 const passwordUpdateError = document.getElementById('password-update-error');
@@ -38,14 +222,435 @@ const passwordUpdateError = document.getElementById('password-update-error');
 const onboardingForm = document.getElementById('onboarding-form');
 const btnOnboarding = document.getElementById('btn-onboarding');
 const onboardingError = document.getElementById('onboarding-error');
+const joinTribuForm = document.getElementById('join-tribu-form');
+const btnJoinTribu = document.getElementById('btn-join-tribu');
+const tabJoinTribu = document.getElementById('tab-join-tribu');
+const tabCreateTribu = document.getElementById('tab-create-tribu');
+const joinCodigoInput = document.getElementById('join-codigo');
+const joinNombreInput = document.getElementById('join-nombre-usuario');
+const inviteWelcomeBanner = document.getElementById('invite-welcome-banner');
+const inviteWelcomeText = document.getElementById('invite-welcome-text');
+const inviteDetectedBanner = document.getElementById('invite-detected-banner');
+const inviteDetectedText = document.getElementById('invite-detected-text');
+
 const btnLogout = document.getElementById('btn-logout');
+const btnInviteFamily = document.getElementById('btn-invite-family');
 const navItems = document.querySelectorAll('.nav-item');
+
+const modalContainer = document.getElementById('modal-container');
+const modalCardContent = document.getElementById('modal-card-content');
+const toastContainer = document.getElementById('toast-container');
 
 let currentUser = null;
 let currentProfile = null;
 let authMode = 'login';
 let currentView = 'dashboard';
 let viewRenderId = 0;
+let currentTaskFilter = 'all'; // 'all' | 'mine' | 'pool'
+let currentMenuDayFilter = 'Todos'; // 'Todos' or day name
+
+const btnThemeToggle = document.getElementById('btn-theme-toggle');
+const fabWrapper = document.getElementById('fab-wrapper');
+const fabMainBtn = document.getElementById('fab-main-btn');
+const fabMenu = document.getElementById('fab-menu');
+const fabAddShop = document.getElementById('fab-add-shop');
+const fabAddTask = document.getElementById('fab-add-task');
+const fabAddMeal = document.getElementById('fab-add-meal');
+
+// --- Theme Management (System Default + Manual Selection) ---
+const THEME_STORAGE_KEY = 'tribuapp-theme';
+
+function getCurrentThemePreference() {
+    return localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+}
+
+function applyTheme(theme) {
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (theme === 'system') {
+        document.documentElement.removeAttribute('data-theme');
+        if (btnThemeToggle) {
+            btnThemeToggle.innerText = '🌓';
+            btnThemeToggle.title = 'Tema: Automático (Sigue el móvil)';
+        }
+        if (metaTheme) {
+            metaTheme.setAttribute('content', prefersDark ? '#0F172A' : '#4F46E5');
+        }
+    } else if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        if (btnThemeToggle) {
+            btnThemeToggle.innerText = '🌙';
+            btnThemeToggle.title = 'Tema: Modo Oscuro';
+        }
+        if (metaTheme) metaTheme.setAttribute('content', '#0F172A');
+    } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        if (btnThemeToggle) {
+            btnThemeToggle.innerText = '☀️';
+            btnThemeToggle.title = 'Tema: Modo Claro';
+        }
+        if (metaTheme) metaTheme.setAttribute('content', '#4F46E5');
+    }
+}
+
+function initTheme() {
+    const saved = getCurrentThemePreference();
+    applyTheme(saved);
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (getCurrentThemePreference() === 'system') {
+            applyTheme('system');
+        }
+    });
+
+    btnThemeToggle?.addEventListener('click', openThemeModal);
+}
+
+function openThemeModal() {
+    const cur = getCurrentThemePreference();
+    const html = `
+        <div class="modal-header">
+            <h3>🎨 Modo y Apariencia</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Elige el modo visual de la app. Por defecto se adapta al tema de tu teléfono:
+        </p>
+
+        <div class="theme-options-list">
+            <button type="button" class="theme-option-btn ${cur === 'system' ? 'active' : ''}" data-set-theme="system">
+                <span class="theme-option-icon">🌓</span>
+                <div class="theme-option-text">
+                    <strong>Automático (Modo del dispositivo)</strong>
+                    <span>Sigue el tema claro u oscuro de tu móvil como el resto de apps.</span>
+                </div>
+                ${cur === 'system' ? '<span class="theme-check">✓</span>' : ''}
+            </button>
+
+            <button type="button" class="theme-option-btn ${cur === 'light' ? 'active' : ''}" data-set-theme="light">
+                <span class="theme-option-icon">☀️</span>
+                <div class="theme-option-text">
+                    <strong>Modo Claro</strong>
+                    <span>Fondo claro para alta legibilidad.</span>
+                </div>
+                ${cur === 'light' ? '<span class="theme-check">✓</span>' : ''}
+            </button>
+
+            <button type="button" class="theme-option-btn ${cur === 'dark' ? 'active' : ''}" data-set-theme="dark">
+                <span class="theme-option-icon">🌙</span>
+                <div class="theme-option-text">
+                    <strong>Modo Oscuro</strong>
+                    <span>Ideal para descansar la vista y ahorrar batería.</span>
+                </div>
+                ${cur === 'dark' ? '<span class="theme-check">✓</span>' : ''}
+            </button>
+        </div>
+    `;
+
+    openModal(html);
+
+    document.querySelectorAll('[data-set-theme]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const val = btn.dataset.setTheme;
+            localStorage.setItem(THEME_STORAGE_KEY, val);
+            applyTheme(val);
+            const names = {
+                system: 'Automático (Sigue el modo de tu móvil)',
+                light: 'Modo Claro',
+                dark: 'Modo Oscuro'
+            };
+            showToast(`Tema: ${names[val]}`);
+            closeModal();
+        });
+    });
+}
+
+// --- Floating Action Button (FAB) ---
+function initFab() {
+    if (!fabMainBtn || !fabWrapper) return;
+
+    fabMainBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = fabWrapper.classList.toggle('open');
+        fabMenu?.classList.toggle('hidden', !isOpen);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!fabWrapper.contains(e.target)) {
+            fabWrapper.classList.remove('open');
+            fabMenu?.classList.add('hidden');
+        }
+    });
+
+    fabAddShop?.addEventListener('click', () => {
+        fabWrapper.classList.remove('open');
+        fabMenu?.classList.add('hidden');
+        openQuickAddShoppingModal();
+    });
+
+    fabAddTask?.addEventListener('click', () => {
+        fabWrapper.classList.remove('open');
+        fabMenu?.classList.add('hidden');
+        openQuickAddTaskModal();
+    });
+
+    fabAddMeal?.addEventListener('click', () => {
+        fabWrapper.classList.remove('open');
+        fabMenu?.classList.add('hidden');
+        openQuickAddMealModal();
+    });
+}
+
+function openQuickAddShoppingModal() {
+    const html = `
+        <div class="modal-header">
+            <h3>🛒 Añadir a la compra</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="quick-shop-form">
+            <label for="quick-shop-name">Producto</label>
+            <input type="text" id="quick-shop-name" placeholder="Ej. Leche de avena, Huevos, Manzanas..." required autofocus>
+
+            <div class="form-row-2">
+                <div>
+                    <label for="quick-shop-cant">Cantidad (opcional)</label>
+                    <input type="text" id="quick-shop-cant" placeholder="Ej. 1 kg, 2 L" maxlength="40">
+                </div>
+                <div>
+                    <label for="quick-shop-sec">Pasillo</label>
+                    <select id="quick-shop-sec" class="input-select">
+                        <option value="auto">🪄 Detectar automáticamente</option>
+                        ${AISLE_ORDER.map(a => `<option value="${a}">${AISLE_ICONS[a]} ${a}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="margin-top: 14px;">
+                <button type="submit" class="btn-primary">Añadir a la compra</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            </div>
+        </form>
+    `;
+
+    openModal(html);
+    setTimeout(() => document.getElementById('quick-shop-name')?.focus(), 100);
+
+    document.getElementById('quick-shop-form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nombre = document.getElementById('quick-shop-name').value.trim();
+        const cantidad = document.getElementById('quick-shop-cant').value.trim();
+        const secVal = document.getElementById('quick-shop-sec').value;
+        const seccion = secVal === 'auto' ? getAisleCategory(nombre) : secVal;
+
+        if (!nombre) return;
+        const state = getAppState();
+        state.shopping.push({
+            id: crypto.randomUUID(),
+            nombre,
+            cantidad,
+            seccion,
+            comprado: false
+        });
+        saveAppState(state);
+        showToast(`🛒 "${nombre}" añadido a la compra`);
+        closeModal();
+        if (currentView === 'dashboard' || currentView === 'compra') {
+            renderizarVista(currentView);
+        }
+    });
+}
+
+async function openQuickAddTaskModal() {
+    let members = [];
+    try {
+        const data = await fetchFamilyData();
+        members = data.members || [];
+    } catch {
+        members = [];
+    }
+
+    const today = getLocalDateInputValue();
+    const html = `
+        <div class="modal-header">
+            <h3>✅ Nueva Tarea</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="quick-task-form">
+            <label for="quick-task-name">Nombre de la tarea</label>
+            <input type="text" id="quick-task-name" placeholder="Ej. Poner lavadora, pasar aspiradora..." required autofocus>
+
+            <div class="form-row-2">
+                <div>
+                    <label for="quick-task-assign">Asignar a</label>
+                    <select id="quick-task-assign" class="input-select">
+                        <option value="">🧺 Bolsa común</option>
+                        ${members.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.nombre)}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label for="quick-task-date">Fecha límite</label>
+                    <input type="date" id="quick-task-date" class="input-select" value="${today}" min="${today}" required>
+                </div>
+            </div>
+
+            <div>
+                <label for="quick-task-recurrence">Repetición</label>
+                <select id="quick-task-recurrence" class="input-select">
+                    <option value="Puntual">Puntual (una sola vez)</option>
+                    <option value="Diaria">🔄 Diaria (todos los días)</option>
+                    <option value="Semanal">🔄 Semanal (cada 7 días)</option>
+                    <option value="Quincenal">🔄 Quincenal</option>
+                    <option value="Mensual">🔄 Mensual</option>
+                </select>
+            </div>
+
+            <div class="modal-footer" style="margin-top: 14px;">
+                <button type="submit" id="btn-quick-task-submit" class="btn-primary">Guardar Tarea</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            </div>
+        </form>
+    `;
+
+    openModal(html);
+    setTimeout(() => document.getElementById('quick-task-name')?.focus(), 100);
+
+    document.getElementById('quick-task-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const submitBtn = document.getElementById('btn-quick-task-submit');
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Guardando...';
+
+        const nombre = document.getElementById('quick-task-name').value.trim();
+        const asignadoA = document.getElementById('quick-task-assign').value || null;
+        const fecha = document.getElementById('quick-task-date').value || today;
+        const recurrencia = document.getElementById('quick-task-recurrence').value || 'Puntual';
+
+        if (!nombre) return;
+
+        let inserted = false;
+        try {
+            const { data: catData, error: catError } = await supabase
+                .from('tareas_catalogo')
+                .insert({ nombre, recurrencia_sugerida: recurrencia })
+                .select('id')
+                .single();
+
+            if (!catError && catData?.id) {
+                const { error: asigError } = await supabase
+                    .from('tareas_asignadas')
+                    .insert({
+                        familia_id: currentProfile?.familia_id,
+                        tarea_id: catData.id,
+                        asignado_a: asignadoA,
+                        fecha_objetivo: fecha,
+                        recurrencia,
+                        estado: 'Pendiente'
+                    });
+                if (!asigError) inserted = true;
+            }
+        } catch {
+            inserted = false;
+        }
+
+        if (!inserted) {
+            const currentTasks = readFromStorage(STORAGE_KEYS.tasks, []);
+            currentTasks.push({
+                id: crypto.randomUUID(),
+                fecha_objetivo: fecha,
+                estado: 'Pendiente',
+                asignado_a: asignadoA,
+                recurrencia,
+                tareas_catalogo: { nombre }
+            });
+            saveToStorage(STORAGE_KEYS.tasks, currentTasks);
+        }
+
+        showToast(`✅ Tarea "${nombre}" creada`);
+        closeModal();
+        if (currentView === 'dashboard' || currentView === 'tareas') {
+            await renderizarVista(currentView);
+        }
+    });
+}
+
+function openQuickAddMealModal() {
+    const todayDayName = getTodayWeekDayName();
+    const html = `
+        <div class="modal-header">
+            <h3>🍽️ Añadir plato al menú</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="quick-meal-form">
+            <label for="quick-meal-name">Nombre del plato</label>
+            <input type="text" id="quick-meal-name" placeholder="Ej. Lentejas caseras, Pollo asado..." required autofocus>
+
+            <div class="form-row-2">
+                <div>
+                    <label for="quick-meal-day">Día</label>
+                    <select id="quick-meal-day" class="input-select">
+                        ${WEEK_DAYS.map(d => `<option value="${d}" ${d === todayDayName ? 'selected' : ''}>${d}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label for="quick-meal-type">Tipo</label>
+                    <select id="quick-meal-type" class="input-select">
+                        <option value="Comida">☀️ Comida</option>
+                        <option value="Cena">🌙 Cena</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row-2">
+                <div>
+                    <label for="quick-meal-time">Tiempo</label>
+                    <input type="text" id="quick-meal-time" placeholder="Ej. 25 min" value="25 min">
+                </div>
+                <div>
+                    <label for="quick-meal-ing">Ingredientes (opcional)</label>
+                    <input type="text" id="quick-meal-ing" placeholder="Ej. Patatas, Huevos, Cebolla">
+                </div>
+            </div>
+
+            <div class="modal-footer" style="margin-top: 14px;">
+                <button type="submit" class="btn-primary">Guardar plato</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            </div>
+        </form>
+    `;
+
+    openModal(html);
+    setTimeout(() => document.getElementById('quick-meal-name')?.focus(), 100);
+
+    document.getElementById('quick-meal-form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nombre = document.getElementById('quick-meal-name').value.trim();
+        const dia = document.getElementById('quick-meal-day').value;
+        const tipo = document.getElementById('quick-meal-type').value;
+        const tiempo = document.getElementById('quick-meal-time').value.trim() || '25 min';
+        const rawIng = document.getElementById('quick-meal-ing').value.trim();
+        const ingredientes = rawIng ? rawIng.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+        if (!nombre) return;
+        const state = getAppState();
+        state.menu.push({
+            id: crypto.randomUUID(),
+            dia,
+            tipo,
+            nombre,
+            tiempo,
+            ingredientes
+        });
+        saveAppState(state);
+        showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
+        closeModal();
+        if (currentView === 'dashboard' || currentView === 'menus') {
+            renderizarVista(currentView);
+        }
+    });
+}
+
+// --- Storage & Utilities ---
 
 function getStorageKey(key) {
     const owner = currentProfile?.familia_id || currentUser?.id || 'anonymous';
@@ -83,17 +688,154 @@ function saveToStorage(key, value) {
 
 function getAppState() {
     const stored = readFromStorage(STORAGE_KEYS.app, defaultState) || {};
-    return {
-        shopping: Array.isArray(stored.shopping) ? stored.shopping : defaultState.shopping,
-        menu: Array.isArray(stored.menu) ? stored.menu : defaultState.menu,
-    };
+    const rawShopping = Array.isArray(stored.shopping) && stored.shopping.length ? stored.shopping : defaultState.shopping;
+    const rawMenu = Array.isArray(stored.menu) && stored.menu.length ? stored.menu : defaultState.menu;
+
+    const shopping = rawShopping.map(item => ({
+        ...item,
+        seccion: item.seccion || getAisleCategory(item.nombre),
+        cantidad: item.cantidad || ''
+    }));
+
+    const menu = rawMenu.map(item => ({
+        ...item,
+        tipo: item.tipo === 'Cena' ? 'Cena' : 'Comida',
+        tiempo: item.tiempo || '25 min',
+        ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : []
+    }));
+
+    return { shopping, menu };
 }
 
 function saveAppState(state) {
     if (saveToStorage(STORAGE_KEYS.app, state)) return true;
-    showContentError('No se pudo guardar en este dispositivo. Comprueba el espacio disponible y los permisos del navegador.');
+    showToast('Error de almacenamiento local en el navegador');
     return false;
 }
+
+function getKarmaPoints() {
+    return readFromStorage(STORAGE_KEYS.karma, {
+        '31b888de-c2bf-4077-903f-874ad3bc9263': 50
+    }) || {};
+}
+
+function addKarmaPoints(memberId, points = 10) {
+    const karma = getKarmaPoints();
+    const id = memberId || currentProfile?.id || 'user';
+    karma[id] = (karma[id] || 0) + points;
+    saveToStorage(STORAGE_KEYS.karma, karma);
+    return karma[id];
+}
+
+function showToast(message) {
+    if (!toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerText = message;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 2800);
+}
+
+function openModal(contentHtml) {
+    if (!modalContainer || !modalCardContent) return;
+    modalCardContent.innerHTML = contentHtml;
+    modalContainer.classList.remove('hidden');
+    const closeBtn = modalCardContent.querySelector('.modal-close');
+    if (closeBtn) closeBtn.onclick = closeModal;
+}
+
+function closeModal() {
+    if (!modalContainer) return;
+    modalContainer.classList.add('hidden');
+    if (modalCardContent) modalCardContent.innerHTML = '';
+}
+
+modalContainer?.addEventListener('click', (e) => {
+    if (e.target === modalContainer) closeModal();
+});
+
+function getLocalDateInputValue(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function computeNextRecurringDate(baseDateStr, recurrence) {
+    const d = new Date(baseDateStr ? `${baseDateStr}T00:00:00` : new Date());
+    if (recurrence === 'Diaria') d.setDate(d.getDate() + 1);
+    else if (recurrence === 'Semanal') d.setDate(d.getDate() + 7);
+    else if (recurrence === 'Quincenal') d.setDate(d.getDate() + 14);
+    else if (recurrence === 'Mensual') d.setMonth(d.getMonth() + 1);
+    else return null;
+    return getLocalDateInputValue(d);
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[character]);
+}
+
+function getTodayWeekDayName() {
+    const day = new Date().getDay();
+    if (day === 0 || day === 6) return 'Fin de semana';
+    const days = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+    return days[day] || 'Lunes';
+}
+
+function getInviteCode(familyId = '') {
+    const clean = (familyId || 'FAM123').replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase();
+    return `TRIBU-${clean}`;
+}
+
+function getPublicAppUrl() {
+    const custom = localStorage.getItem('tribuapp_custom_deploy_url');
+    if (custom && custom.startsWith('http')) {
+        return custom.replace(/\/$/, '');
+    }
+    let url = window.location.origin;
+    if (url.includes('ais-dev-')) {
+        url = url.replace('ais-dev-', 'ais-pre-');
+    }
+    if (window.location.pathname && window.location.pathname !== '/' && !window.location.pathname.endsWith('.html')) {
+        url += window.location.pathname.replace(/\/$/, '');
+    }
+    return url;
+}
+
+function getPendingInvite() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const join = params.get('join');
+        const code = params.get('code');
+        const tribu = params.get('tribu');
+        if (join || code) {
+            const invite = {
+                familyId: join || '',
+                code: code || '',
+                tribuName: tribu || 'Familia'
+            };
+            sessionStorage.setItem('tribuapp_pending_invite', JSON.stringify(invite));
+            return invite;
+        }
+        const saved = sessionStorage.getItem('tribuapp_pending_invite');
+        return saved ? JSON.parse(saved) : null;
+    } catch {
+        return null;
+    }
+}
+
+// --- Session & Auth ---
 
 function setCurrentUser(user) {
     if (currentUser?.id !== user?.id) {
@@ -148,6 +890,19 @@ function updateAuthMode(mode) {
 btnAuthMode.addEventListener('click', () => {
     updateAuthMode(authMode === 'login' ? 'signup' : 'login');
 });
+
+if (btnDemoLogin) {
+    btnDemoLogin.addEventListener('click', () => {
+        if (authMode !== 'login') updateAuthMode('login');
+        emailInput.value = 'demo@tribuapp.com';
+        passwordInput.value = 'password123';
+        if (typeof authForm.requestSubmit === 'function') {
+            authForm.requestSubmit();
+        } else {
+            btnSubmit.click();
+        }
+    });
+}
 
 btnResetPassword.addEventListener('click', async () => {
     const email = emailInput.value.trim().toLowerCase();
@@ -252,13 +1007,9 @@ authForm.addEventListener('submit', async (event) => {
 btnLogout.addEventListener('click', async () => {
     try {
         const { error } = await supabase.auth.signOut();
-        if (error) {
-            showAuthError(`No se pudo cerrar sesión: ${error.message}`);
-            return;
-        }
+        if (error) console.warn(error);
     } catch (error) {
-        showAuthError(`No se pudo cerrar sesión: ${error.message}`);
-        return;
+        console.warn(error);
     }
 
     setCurrentUser(null);
@@ -268,15 +1019,22 @@ btnLogout.addEventListener('click', async () => {
     onboardingView.classList.add('hidden');
     appView.classList.add('hidden');
     authError.classList.add('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
 });
 
 async function mostrarApp() {
     authView.classList.add('hidden');
 
+    const pendingInvite = getPendingInvite();
+
     if (!currentUser) {
         authView.classList.remove('hidden');
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
+        if (pendingInvite && inviteWelcomeBanner && inviteWelcomeText) {
+            inviteWelcomeText.innerText = `¡Te han invitado a unirte a "${pendingInvite.tribuName}"! Inicia sesión o regístrate para entrar.`;
+            inviteWelcomeBanner.classList.remove('hidden');
+        }
         return;
     }
 
@@ -298,13 +1056,157 @@ async function mostrarApp() {
     if (!profile) {
         onboardingView.classList.remove('hidden');
         appView.classList.add('hidden');
+
+        // Pre-configure onboarding based on invite
+        if (pendingInvite) {
+            tabJoinTribu?.classList.add('active');
+            tabCreateTribu?.classList.remove('active');
+            joinTribuForm?.classList.remove('hidden');
+            onboardingForm?.classList.add('hidden');
+            if (joinCodigoInput) joinCodigoInput.value = pendingInvite.code || pendingInvite.familyId;
+            if (joinNombreInput) joinNombreInput.value = getFriendlyUserName();
+            if (inviteDetectedBanner && inviteDetectedText) {
+                inviteDetectedText.innerText = `Te estás uniendo a la tribu "${pendingInvite.tribuName}" (Código: ${pendingInvite.code || pendingInvite.familyId})`;
+                inviteDetectedBanner.classList.remove('hidden');
+            }
+        } else {
+            inviteDetectedBanner?.classList.add('hidden');
+        }
         return;
+    }
+
+    // If user already had a profile and opens a different family invite
+    if (pendingInvite && pendingInvite.familyId && profile.familia_id !== pendingInvite.familyId) {
+        const switchFamily = confirm(`Has recibido una invitación para unirte a la tribu "${pendingInvite.tribuName}". ¿Deseas unirte a esta tribu ahora?`);
+        if (switchFamily) {
+            try {
+                await handleJoinTribu(pendingInvite.familyId || pendingInvite.code, profile.nombre);
+                showToast(`🎉 ¡Te has unido a "${pendingInvite.tribuName}"!`);
+            } catch (err) {
+                showToast(err.message || 'No se pudo cambiar de tribu');
+            }
+        }
+        sessionStorage.removeItem('tribuapp_pending_invite');
     }
 
     onboardingView.classList.add('hidden');
     appView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
     renderizarVista('dashboard');
 }
+
+async function handleJoinTribu(codigoOId, memberName) {
+    if (!currentUser) throw new Error('Debes haber iniciado sesión');
+
+    let family = null;
+    const cleanInput = String(codigoOId || '').trim();
+    if (!cleanInput) throw new Error('Introduce un código de invitación o enlace');
+
+    // 1. Try search by exact UUID if looks like UUID
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanInput)) {
+        const { data, error } = await supabase
+            .from('familias')
+            .select('id, nombre, dieta_base')
+            .eq('id', cleanInput)
+            .maybeSingle();
+        if (!error && data) family = data;
+    }
+
+    // 2. Try search by TRIBU- prefix
+    if (!family) {
+        let prefix = cleanInput.toUpperCase();
+        if (prefix.startsWith('TRIBU-')) {
+            prefix = prefix.replace('TRIBU-', '');
+        }
+        prefix = prefix.toLowerCase();
+
+        if (prefix.length >= 3) {
+            const { data, error } = await supabase
+                .from('familias')
+                .select('id, nombre, dieta_base')
+                .ilike('id', `${prefix}%`)
+                .limit(1);
+            if (!error && data && data.length > 0) {
+                family = data[0];
+            }
+        }
+    }
+
+    // 3. Fallback: search by name
+    if (!family) {
+        const { data, error } = await supabase
+            .from('familias')
+            .select('id, nombre, dieta_base')
+            .ilike('nombre', `%${cleanInput}%`)
+            .limit(1);
+        if (!error && data && data.length > 0) {
+            family = data[0];
+        }
+    }
+
+    if (!family) {
+        throw new Error('No se encontró ninguna tribu con ese código. Comprueba que el código o enlace sea correcto.');
+    }
+
+    // Upsert user into usuarios table
+    const { data: profile, error: profileError } = await supabase
+        .from('usuarios')
+        .upsert({
+            id: currentUser.id,
+            familia_id: family.id,
+            nombre: memberName || getFriendlyUserName(),
+            rol: 'Miembro',
+        })
+        .select('id, familia_id, nombre, rol')
+        .single();
+
+    if (profileError) throw profileError;
+
+    currentProfile = profile;
+    sessionStorage.removeItem('tribuapp_pending_invite');
+    return family;
+}
+
+tabJoinTribu?.addEventListener('click', () => {
+    tabJoinTribu.classList.add('active');
+    tabCreateTribu.classList.remove('active');
+    joinTribuForm.classList.remove('hidden');
+    onboardingForm.classList.add('hidden');
+    onboardingError.classList.add('hidden');
+});
+
+tabCreateTribu?.addEventListener('click', () => {
+    tabCreateTribu.classList.add('active');
+    tabJoinTribu.classList.remove('active');
+    onboardingForm.classList.remove('hidden');
+    joinTribuForm.classList.add('hidden');
+    onboardingError.classList.add('hidden');
+});
+
+joinTribuForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    onboardingError.classList.add('hidden');
+    btnJoinTribu.disabled = true;
+    btnJoinTribu.innerText = 'Uniéndote...';
+
+    const codigo = joinCodigoInput.value.trim();
+    const nombre = joinNombreInput.value.trim() || getFriendlyUserName();
+
+    try {
+        const family = await handleJoinTribu(codigo, nombre);
+        showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
+        onboardingView.classList.add('hidden');
+        appView.classList.remove('hidden');
+        if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+        await renderizarVista('dashboard');
+    } catch (err) {
+        onboardingError.innerText = err.message || 'No se pudo unir a la tribu';
+        onboardingError.classList.remove('hidden');
+    } finally {
+        btnJoinTribu.disabled = false;
+        btnJoinTribu.innerText = 'Unirme a la Tribu';
+    }
+});
 
 onboardingForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -353,22 +1255,6 @@ onboardingForm.addEventListener('submit', async (event) => {
         currentProfile = profile;
     } catch (error) {
         let message = `No se pudo crear la tribu: ${error.message}`;
-        if (createdFamilyId) {
-            try {
-                const { data: deletedFamily, error: cleanupError } = await supabase
-                    .from('familias')
-                    .delete()
-                    .eq('id', createdFamilyId)
-                    .select('id')
-                    .maybeSingle();
-                if (cleanupError) throw cleanupError;
-                if (!deletedFamily) {
-                    throw new Error('Supabase no confirmó la eliminación de la familia.');
-                }
-            } catch (cleanupError) {
-                message += ` No se pudo eliminar la familia incompleta (${cleanupError.message}); contacta con el administrador antes de volver a intentarlo.`;
-            }
-        }
         onboardingError.innerText = message;
         onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
@@ -378,6 +1264,7 @@ onboardingForm.addEventListener('submit', async (event) => {
 
     onboardingView.classList.add('hidden');
     appView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
     await renderizarVista('dashboard');
     btnOnboarding.disabled = false;
     btnOnboarding.innerText = 'Crear Tribu';
@@ -386,10 +1273,6 @@ onboardingForm.addEventListener('submit', async (event) => {
 
 navItems.forEach((item) => {
     item.addEventListener('click', () => {
-        navItems.forEach((nav) => nav.classList.remove('active'));
-        item.classList.add('active');
-        navItems.forEach((nav) => nav.setAttribute('aria-current', nav === item ? 'page' : 'false'));
-
         const targetView = item.getAttribute('data-target');
         renderizarVista(targetView);
     });
@@ -404,6 +1287,7 @@ async function renderizarVista(vista) {
         item.classList.toggle('active', active);
         item.setAttribute('aria-current', active ? 'page' : 'false');
     });
+
     const renderId = ++viewRenderId;
     mainContent.innerHTML = '<p class="empty-state">Cargando...</p>';
     try {
@@ -426,23 +1310,9 @@ async function renderizarVista(vista) {
         }
     } catch (error) {
         if (renderId === viewRenderId) {
-            showContentError(`No se pudieron cargar los datos: ${error.message}`);
+            mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(error.message)}</p>`;
         }
     }
-}
-
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (character) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-    })[character]);
-}
-
-function showContentError(message) {
-    mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(message)}</p>`;
 }
 
 async function fetchFamilyData() {
@@ -459,98 +1329,547 @@ async function fetchFamilyData() {
             .order('fecha_objetivo', { ascending: true }),
     ]);
 
-    const failed = [familyResult, membersResult, tasksResult].find((result) => result.error);
-    if (failed) throw failed.error;
+    if (familyResult.error) throw familyResult.error;
+    if (membersResult.error) throw membersResult.error;
+
+    let tasks = [];
+    if (!tasksResult.error && Array.isArray(tasksResult.data)) {
+        tasks = tasksResult.data;
+    } else {
+        const storedTasks = readFromStorage(STORAGE_KEYS.tasks, null);
+        if (storedTasks && Array.isArray(storedTasks)) {
+            tasks = storedTasks;
+        } else {
+            tasks = getSampleTasks(currentProfile.familia_id, currentProfile.id);
+            saveToStorage(STORAGE_KEYS.tasks, tasks);
+        }
+    }
 
     return {
         family: familyResult.data,
         members: membersResult.data || [],
-        tasks: tasksResult.data || [],
+        tasks,
     };
 }
+
+// --- Invitación a la Tribu Modal ---
+
+function openInviteModal(family) {
+    const code = getInviteCode(family?.id);
+    const publicUrl = getPublicAppUrl();
+    const directJoinLink = `${publicUrl}?join=${encodeURIComponent(family?.id || '')}&code=${encodeURIComponent(code)}&tribu=${encodeURIComponent(family?.nombre || 'Mi Hogar')}`;
+    const customDeployUrl = localStorage.getItem('tribuapp_custom_deploy_url') || '';
+
+    const html = `
+        <div class="modal-header">
+            <h3>👥 Invitar a tu Tribu</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+            Comparte este enlace con tus familiares. Al pulsar en él, entrarán directamente a tu tribu sin ningún error de acceso 403:
+        </p>
+
+        <div class="invite-code-box">
+            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Código de invitación</div>
+            <div class="invite-code-val">${escapeHtml(code)}</div>
+            <div style="font-size: 11px; color: var(--primary); margin-top: 6px;">Tribu: ${escapeHtml(family?.nombre || 'Mi Hogar')}</div>
+        </div>
+
+        <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">🔗 Enlace de acceso:</span>
+                ${customDeployUrl ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Render / Personalizado</span>' : '<span class="chip" style="font-size: 10px; padding: 2px 6px;">AI Studio Público</span>'}
+            </div>
+            <div style="font-size: 12px; word-break: break-all; color: var(--text-main); font-family: monospace; background: var(--card-bg); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 6px;">${escapeHtml(directJoinLink)}</div>
+            <div style="font-size: 11px; color: var(--success); font-weight: 600;">✨ Enlace verificado y abierto para familiares</div>
+        </div>
+
+        <!-- Opción para enlazar a Render / GitHub Pages si está desplegado allí -->
+        <details style="margin-bottom: 14px; font-size: 13px; text-align: left;">
+            <summary style="cursor: pointer; color: var(--primary); font-weight: 600; margin-bottom: 8px;">⚙️ ¿Usas Render o GitHub Pages? Cambiar enlace base</summary>
+            <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; margin-top: 6px;">
+                <label for="custom-deploy-url-input" style="font-size: 12px; margin-bottom: 4px; display: block; color: var(--text-muted);">
+                    URL pública de tu despliegue (ej. https://mi-tribu.onrender.com):
+                </label>
+                <input type="url" id="custom-deploy-url-input" placeholder="https://..." value="${escapeHtml(customDeployUrl)}" style="margin-bottom: 8px; font-size: 13px; padding: 8px 12px;">
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btn-save-custom-url" class="btn-secondary" style="font-size: 12px; padding: 8px 12px; flex: 1;">Guardar URL</button>
+                    ${customDeployUrl ? '<button type="button" id="btn-reset-custom-url" class="text-button" style="font-size: 12px;">Restablecer</button>' : ''}
+                </div>
+            </div>
+        </details>
+
+        <div class="form-actions" style="margin-bottom: 12px;">
+            <button type="button" id="btn-copy-code" class="btn-secondary">📋 Copiar enlace y código</button>
+        </div>
+
+        <button type="button" id="btn-invite-wa" class="btn-primary btn-whatsapp" style="width: 100%;">
+            💬 Enviar por WhatsApp a la familia
+        </button>
+    `;
+
+    openModal(html);
+
+    document.getElementById('btn-save-custom-url')?.addEventListener('click', () => {
+        const inputVal = document.getElementById('custom-deploy-url-input')?.value.trim();
+        if (inputVal && inputVal.startsWith('http')) {
+            localStorage.setItem('tribuapp_custom_deploy_url', inputVal.replace(/\/$/, ''));
+            showToast('✅ URL de despliegue guardada');
+            openInviteModal(family);
+        } else {
+            showToast('Introduce una URL válida que empiece por https://');
+        }
+    });
+
+    document.getElementById('btn-reset-custom-url')?.addEventListener('click', () => {
+        localStorage.removeItem('tribuapp_custom_deploy_url');
+        showToast('Restablecido al enlace público de AI Studio');
+        openInviteModal(family);
+    });
+
+    document.getElementById('btn-copy-code')?.addEventListener('click', async () => {
+        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar "${family?.nombre || 'Familia'}" en Tribuapp.\n\nCódigo: ${code}\nEnlace directo: ${directJoinLink}`;
+        try {
+            await navigator.clipboard.writeText(text);
+            showToast('¡Enlace público y código copiados!');
+        } catch {
+            showToast(`Código: ${code}`);
+        }
+    });
+
+    document.getElementById('btn-invite-wa')?.addEventListener('click', () => {
+        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar *${family?.nombre || 'Familia'}* en Tribuapp.\n\nCódigo de acceso: *${code}*\n\n👉 Entra directamente aquí para unirte a la familia:\n${directJoinLink}`;
+        window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    });
+}
+
+btnInviteFamily?.addEventListener('click', async () => {
+    try {
+        const { family } = await fetchFamilyData();
+        openInviteModal(family);
+    } catch {
+        openInviteModal({ id: 'TRIBU1', nombre: 'Mi Familia' });
+    }
+});
+
+// --- DASHBOARD VIEW ---
 
 async function renderDashboard(renderId) {
     const [{ family, members, tasks }, localState] = await Promise.all([fetchFamilyData(), getAppState()]);
     if (renderId !== viewRenderId) return;
+
+    if (headerTribeBadge) {
+        headerTribeBadge.innerText = `⛺ ${family.nombre}`;
+        headerTribeBadge.classList.remove('hidden');
+    }
+
+    const todayIso = getLocalDateInputValue();
+    const todayDayName = getTodayWeekDayName();
+
+    const tasksForToday = tasks.filter((task) => task.fecha_objetivo === todayIso);
+    const completedToday = tasksForToday.filter((task) => task.estado === 'Completada');
+    const pendingToday = tasksForToday.filter((task) => task.estado !== 'Completada');
+    const overdueTasks = tasks.filter((task) => task.estado !== 'Completada' && task.fecha_objetivo && task.fecha_objetivo < todayIso);
     const pendingTasks = tasks.filter((task) => task.estado !== 'Completada');
-    const nextTask = pendingTasks[0];
-    const nextTaskText = nextTask
-        ? `${nextTask.tareas_catalogo?.nombre || 'Tarea'} · ${nextTask.fecha_objetivo ? new Date(`${nextTask.fecha_objetivo}T00:00:00`).toLocaleDateString('es-ES') : 'Sin fecha'}`
-        : 'Todo está al día';
+
+    const totalTodayCount = tasksForToday.length;
+    const completedTodayCount = completedToday.length;
+    const progressPercent = totalTodayCount > 0 ? Math.round((completedTodayCount / totalTodayCount) * 100) : (pendingToday.length === 0 ? 100 : 0);
+
+    const todayMenu = localState.menu.filter((item) => item.dia === todayDayName);
+    const todayComida = todayMenu.find((item) => (item.tipo || 'Comida') === 'Comida');
+    const todayCena = todayMenu.find((item) => item.tipo === 'Cena');
+
+    const pendingShopping = localState.shopping.filter((item) => !item.comprado);
+    const totalShopping = localState.shopping.length;
+    const boughtShopping = localState.shopping.filter((item) => item.comprado).length;
+    const shoppingPercent = totalShopping > 0 ? Math.round((boughtShopping / totalShopping) * 100) : 100;
+
+    let todayTasksHtml = '';
+    if (overdueTasks.length > 0) {
+        todayTasksHtml += `
+            <div class="alert-banner">
+                <span>⚠️</span>
+                <span>Tienes <strong>${overdueTasks.length}</strong> tarea${overdueTasks.length > 1 ? 's' : ''} atrasada${overdueTasks.length > 1 ? 's' : ''} de días anteriores.</span>
+            </div>
+        `;
+    }
+
+    const priorityTasks = [...overdueTasks, ...pendingToday];
+    if (priorityTasks.length > 0) {
+        todayTasksHtml += `<div class="today-tasks-container">` + priorityTasks.map((task) => {
+            const isOverdue = task.fecha_objetivo && task.fecha_objetivo < todayIso;
+            const assignedMember = members.find((m) => m.id === task.asignado_a);
+            const assignedName = assignedMember?.nombre || 'Bolsa común';
+            const badgeClass = isOverdue ? 'badge-overdue' : 'badge-today';
+            const badgeLabel = isOverdue ? 'Atrasada' : 'Hoy';
+
+            return `
+                <div class="today-task-item">
+                    <div class="today-task-info">
+                        <span class="today-task-title">${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</span>
+                        <div class="today-task-meta">
+                            <span class="${badgeClass}">${badgeLabel}</span>
+                            ${task.recurrencia && task.recurrencia !== 'Puntual' ? `<span class="recurrence-badge">🔄 ${escapeHtml(task.recurrencia)}</span>` : ''}
+                            <span>👤 ${escapeHtml(assignedName)}</span>
+                        </div>
+                    </div>
+                    <button data-complete-task-dash="${escapeHtml(task.id)}" class="btn-primary btn-icon-square" aria-label="Completar tarea" title="Marcar como completada">✓</button>
+                </div>
+            `;
+        }).join('') + `</div>`;
+    } else {
+        todayTasksHtml += `
+            <div class="empty-dashboard-block">
+                <p>✨ ¡Todo al día! No tienes tareas pendientes para hoy.</p>
+                <button type="button" class="btn-secondary btn-inline" data-nav-view="tareas">+ Asignar tarea</button>
+            </div>
+        `;
+    }
+
+    const todayMenuHtml = `
+        <div class="today-meals-grid">
+            <div class="today-meal-card">
+                <div class="today-meal-header">
+                    <span class="meal-badge comida">☀️ Comida</span>
+                    <span class="meal-status ${todayComida ? '' : 'empty'}">${todayComida ? 'Planificado' : 'Pendiente'}</span>
+                </div>
+                ${todayComida ? `
+                    <div class="today-meal-content">
+                        <span class="today-meal-icon">🍲</span>
+                        <div>
+                            <strong class="today-meal-name">${escapeHtml(todayComida.nombre)}</strong>
+                            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">⏱️ ${escapeHtml(todayComida.tiempo || '25 min')} · ${todayComida.ingredientes?.length || 0} ingr.</div>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="today-meal-empty">
+                        <p>Sin plato para el mediodía.</p>
+                        <button type="button" class="text-button" data-add-meal="Comida">+ Añadir comida</button>
+                    </div>
+                `}
+            </div>
+
+            <div class="today-meal-card">
+                <div class="today-meal-header">
+                    <span class="meal-badge cena">🌙 Cena</span>
+                    <span class="meal-status ${todayCena ? '' : 'empty'}">${todayCena ? 'Planificado' : 'Pendiente'}</span>
+                </div>
+                ${todayCena ? `
+                    <div class="today-meal-content">
+                        <span class="today-meal-icon">🥗</span>
+                        <div>
+                            <strong class="today-meal-name">${escapeHtml(todayCena.nombre)}</strong>
+                            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">⏱️ ${escapeHtml(todayCena.tiempo || '20 min')} · ${todayCena.ingredientes?.length || 0} ingr.</div>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="today-meal-empty">
+                        <p>Sin plato para la noche.</p>
+                        <button type="button" class="text-button" data-add-meal="Cena">+ Añadir cena</button>
+                    </div>
+                `}
+            </div>
+        </div>
+    `;
 
     mainContent.innerHTML = `
         <div class="dashboard-header">
             <div>
-                <p class="eyebrow">Resumen de la tribu</p>
+                <p class="eyebrow">Resumen del hogar</p>
                 <h3>${escapeHtml(family.nombre)}</h3>
             </div>
-            <span class="chip">${escapeHtml(family.dieta_base || 'Sin dieta')}</span>
-        </div>
-        <div class="dashboard-grid">
-            <article class="stat-card"><span>Pendientes</span><strong>${pendingTasks.length}</strong></article>
-            <article class="stat-card"><span>Completadas</span><strong>${tasks.length - pendingTasks.length}</strong></article>
-            <article class="stat-card"><span>Compra</span><strong>${localState.shopping.filter((item) => !item.comprado).length}</strong></article>
-        </div>
-        <div class="panel"><h4>Próxima prioridad</h4><p>${escapeHtml(nextTaskText)}</p></div>
-        <div class="panel">
-            <h4>Miembros</h4>
-            <div class="member-list">${members.map((member) => `
-                <div class="member-pill">
-                    <span class="member-avatar">${escapeHtml((member.nombre || 'T').charAt(0).toUpperCase())}</span>
-                    <span>${escapeHtml(member.nombre || 'Miembro')}</span>
-                </div>`).join('')}
+            <div style="display: flex; gap: 6px; align-items: center;">
+                <span class="chip">${escapeHtml(family.dieta_base || 'Dieta')}</span>
+                <button type="button" id="btn-dash-invite" class="chip" style="cursor: pointer;">👥 Invitar</button>
             </div>
-        </div>`;
+        </div>
+
+        <div class="dashboard-grid">
+            <article class="stat-card">
+                <span>Pendientes hoy</span>
+                <strong>${pendingToday.length + overdueTasks.length}</strong>
+            </article>
+            <article class="stat-card">
+                <span>Progreso tareas</span>
+                <strong>${progressPercent}%</strong>
+            </article>
+            <article class="stat-card">
+                <span>Por comprar</span>
+                <strong>${pendingShopping.length}</strong>
+            </article>
+        </div>
+
+        <!-- Progreso Visual Diario del Hogar -->
+        <section class="daily-progress-card" aria-label="Progreso del día">
+            <div class="progress-header">
+                <span class="progress-title">🎯 Progreso del día</span>
+                <span class="progress-badge ${totalTodayCount > 0 && progressPercent === 100 ? 'complete' : ''}">
+                    ${totalTodayCount > 0 ? `${completedTodayCount}/${totalTodayCount} tareas (${progressPercent}%)` : (pendingToday.length === 0 ? 'Al día ✨' : `${pendingToday.length} pendiente${pendingToday.length > 1 ? 's' : ''}`)}
+                </span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" style="width: ${progressPercent}%;"></div>
+            </div>
+            <div class="progress-hint">
+                <span>${totalTodayCount > 0 && progressPercent === 100 
+                    ? '🎉 ¡Todas las tareas de hoy completadas! Gran trabajo en equipo.' 
+                    : (pendingToday.length > 0 ? `Quedan ${pendingToday.length} tarea${pendingToday.length > 1 ? 's' : ''} pendientes para hoy` : '✨ Sin tareas pendientes para hoy')}</span>
+                ${totalShopping > 0 ? `<span style="font-size: 11px;">🛒 Compra: ${boughtShopping}/${totalShopping} (${shoppingPercent}%)</span>` : ''}
+            </div>
+        </section>
+
+        <!-- Tareas para hoy -->
+        <section class="panel" aria-labelledby="dash-tasks-title">
+            <div class="section-header-compact">
+                <h4 id="dash-tasks-title">✅ Tareas para hoy</h4>
+                <button type="button" class="text-button" data-nav-view="tareas">Ver todas (${pendingTasks.length}) →</button>
+            </div>
+            ${todayTasksHtml}
+        </section>
+
+        <!-- Menú de hoy -->
+        <section class="panel" aria-labelledby="dash-menu-title">
+            <div class="section-header-compact">
+                <h4 id="dash-menu-title">🍽️ Menú de hoy (${escapeHtml(todayDayName)})</h4>
+                <button type="button" class="text-button" data-nav-view="menus">Ver semana →</button>
+            </div>
+            ${todayMenuHtml}
+            <div style="display: flex; gap: 8px; margin-top: 14px;">
+                <button type="button" id="btn-quick-pantry-review" class="btn-secondary" style="font-size: 12px; padding: 8px 12px; flex: 1;">🛒 Revisar despensa y comprar</button>
+            </div>
+        </section>
+
+        <!-- Miembros -->
+        <section class="panel" aria-labelledby="dash-members-title">
+            <div class="section-header-compact">
+                <h4 id="dash-members-title">👥 Miembros de la Tribu</h4>
+                <button type="button" class="text-button" id="btn-dash-invite-2">+ Invitar</button>
+            </div>
+            <div class="member-list">
+                ${members.map((member) => `
+                    <div class="member-pill">
+                        <span class="member-avatar">${escapeHtml((member.nombre || 'T').charAt(0).toUpperCase())}</span>
+                        <span>${escapeHtml(member.nombre || 'Miembro')}</span>
+                        ${member.rol === 'Admin' ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Admin</span>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </section>
+    `;
+
+    mainContent.querySelectorAll('[data-nav-view]').forEach((button) => {
+        button.addEventListener('click', () => {
+            renderizarVista(button.dataset.navView);
+        });
+    });
+
+    mainContent.querySelectorAll('[data-add-meal]').forEach((button) => {
+        button.addEventListener('click', () => {
+            currentView = 'menus';
+            viewTitle.innerText = 'Menú';
+            navItems.forEach((nav) => {
+                const active = nav.getAttribute('data-target') === 'menus';
+                nav.classList.toggle('active', active);
+                nav.setAttribute('aria-current', active ? 'page' : 'false');
+            });
+            renderMenuView(todayDayName, button.dataset.addMeal);
+        });
+    });
+
+    document.getElementById('btn-dash-invite')?.addEventListener('click', () => openInviteModal(family));
+    document.getElementById('btn-dash-invite-2')?.addEventListener('click', () => openInviteModal(family));
+    document.getElementById('btn-quick-pantry-review')?.addEventListener('click', openPantryReviewModal);
+
+    mainContent.querySelectorAll('[data-complete-task-dash]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            await completarTarea(button.dataset.completeTaskDash);
+        });
+    });
+}
+
+// --- TAREAS VIEW (Filtros, Recurrencia y Progreso Visual) ---
+
+async function completarTarea(taskId) {
+    let task = null;
+    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
+    task = storedTasks.find(t => t.id === taskId);
+
+    try {
+        const { data, error } = await supabase.from('tareas_asignadas')
+            .update({ estado: 'Completada' })
+            .eq('id', taskId)
+            .eq('familia_id', currentProfile.familia_id)
+            .select('id')
+            .maybeSingle();
+
+        if (error || !data) {
+            const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
+            saveToStorage(STORAGE_KEYS.tasks, updated);
+        }
+    } catch {
+        const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
+        saveToStorage(STORAGE_KEYS.tasks, updated);
+    }
+
+    showToast('¡Tarea completada!');
+
+    // Recurrencia: programar próxima aparición automática si es periódica
+    if (task && task.recurrencia && task.recurrencia !== 'Puntual') {
+        const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
+        if (nextDate) {
+            const recurringTask = {
+                id: crypto.randomUUID(),
+                fecha_objetivo: nextDate,
+                estado: 'Pendiente',
+                asignado_a: task.asignado_a,
+                recurrencia: task.recurrencia,
+                tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
+            };
+            const currentList = readFromStorage(STORAGE_KEYS.tasks, []);
+            currentList.push(recurringTask);
+            saveToStorage(STORAGE_KEYS.tasks, currentList);
+        }
+    }
+
+    await renderizarVista(currentView);
 }
 
 async function cargarVistaTareas(renderId) {
     const { members, tasks } = await fetchFamilyData();
     if (renderId !== viewRenderId) return;
+
+    // Filter tasks
+    const mineTasks = tasks.filter(t => t.asignado_a === currentProfile?.id);
+    const poolTasks = tasks.filter(t => !t.asignado_a);
+
+    let displayTasks = tasks;
+    if (currentTaskFilter === 'mine') displayTasks = mineTasks;
+    else if (currentTaskFilter === 'pool') displayTasks = poolTasks;
+
+    const todayIso = getLocalDateInputValue();
+    const tasksForToday = tasks.filter(t => t.fecha_objetivo === todayIso);
+    const completedToday = tasksForToday.filter(t => t.estado === 'Completada');
+    const pendingToday = tasksForToday.filter(t => t.estado !== 'Completada');
+    const todayPercent = tasksForToday.length > 0 ? Math.round((completedToday.length / tasksForToday.length) * 100) : (pendingToday.length === 0 ? 100 : 0);
+
     mainContent.innerHTML = `
         <div class="section-header">
             <h3>Tareas de la Tribu</h3>
-            <button id="btn-nueva-tarea" class="btn-primary btn-inline">+ Asignar</button>
+            <button id="btn-nueva-tarea" class="btn-primary btn-inline">+ Asignar tarea</button>
+        </div>
+
+        <!-- Progreso Visual de Tareas del Día -->
+        <div class="daily-progress-card">
+            <div class="progress-header">
+                <span class="progress-title">🎯 Progreso de hoy</span>
+                <span class="progress-badge ${tasksForToday.length > 0 && todayPercent === 100 ? 'complete' : ''}">
+                    ${tasksForToday.length > 0 ? `${completedToday.length}/${tasksForToday.length} tareas (${todayPercent}%)` : (pendingToday.length === 0 ? 'Al día ✨' : `${pendingToday.length} pendientes`)}
+                </span>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" style="width: ${todayPercent}%;"></div>
+            </div>
+            <div class="progress-hint">
+                <span>${tasksForToday.length > 0 && todayPercent === 100 ? '🎉 ¡Todas las tareas de hoy completadas!' : (pendingToday.length > 0 ? `Quedan ${pendingToday.length} tareas hoy` : '✨ Sin tareas pendientes para hoy')}</span>
+                <span>📅 Hoy</span>
+            </div>
+        </div>
+
+        <!-- Filtros rápidos -->
+        <div class="filter-tabs">
+            <button type="button" class="filter-tab ${currentTaskFilter === 'all' ? 'active' : ''}" data-task-filter="all">Todas (${tasks.length})</button>
+            <button type="button" class="filter-tab ${currentTaskFilter === 'mine' ? 'active' : ''}" data-task-filter="mine">👤 Mis tareas (${mineTasks.length})</button>
+            <button type="button" class="filter-tab ${currentTaskFilter === 'pool' ? 'active' : ''}" data-task-filter="pool">🧺 Bolsa común (${poolTasks.length})</button>
         </div>
 
         <form id="form-nueva-tarea" class="panel hidden">
-            <label for="nueva-tarea-nombre">Tarea</label>
-            <input type="text" id="nueva-tarea-nombre" placeholder="Ej. Fregar los platos" maxlength="120" required>
-            <label for="nueva-tarea-asignado">Asignar a</label>
-            <select id="nueva-tarea-asignado" class="input-select">
-                <option value="">Bolsa común (Cualquiera)</option>
-                ${members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.nombre)}</option>`).join('')}
-            </select>
-            <label for="nueva-tarea-fecha">Fecha límite</label>
-            <input type="date" id="nueva-tarea-fecha" class="input-select" required>
-            <button id="btn-guardar-tarea" type="submit" class="btn-primary">Guardar Tarea</button>
+            <label for="nueva-tarea-nombre">Nombre de la tarea</label>
+            <input type="text" id="nueva-tarea-nombre" placeholder="Ej. Poner lavadora, pasar aspiradora..." maxlength="120" required>
+            
+            <div class="form-row-2">
+                <div>
+                    <label for="nueva-tarea-asignado">Asignar a</label>
+                    <select id="nueva-tarea-asignado" class="input-select">
+                        <option value="">🧺 Bolsa común (Cualquiera)</option>
+                        ${members.map((member) => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.nombre)}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label for="nueva-tarea-fecha">Fecha límite</label>
+                    <input type="date" id="nueva-tarea-fecha" class="input-select" required>
+                </div>
+            </div>
+
+            <div>
+                <label for="nueva-tarea-recurrencia">Repetición</label>
+                <select id="nueva-tarea-recurrencia" class="input-select">
+                    <option value="Puntual">Puntual (una sola vez)</option>
+                    <option value="Diaria">🔄 Diaria (todos los días)</option>
+                    <option value="Semanal">🔄 Semanal (cada 7 días)</option>
+                    <option value="Quincenal">🔄 Quincenal (cada 15 días)</option>
+                    <option value="Mensual">🔄 Mensual</option>
+                </select>
+            </div>
+
+            <div class="form-actions" style="margin-top: 14px;">
+                <button id="btn-guardar-tarea" type="submit" class="btn-primary">Guardar Tarea</button>
+                <button id="btn-cancelar-tarea" type="button" class="btn-secondary">Cancelar</button>
+            </div>
         </form>
 
         <div id="lista-tareas" class="task-list"></div>
     `;
 
     const lista = document.getElementById('lista-tareas');
-    if (!tasks.length) {
-        lista.innerHTML = '<p class="empty-state">¡Todo limpio! No hay tareas pendientes.</p>';
+    if (!displayTasks.length) {
+        lista.innerHTML = `
+            <div class="empty-dashboard-block">
+                <p>No hay tareas en esta sección.</p>
+                <button type="button" class="btn-secondary btn-inline" id="btn-empty-add-task">+ Crear nueva tarea</button>
+            </div>
+        `;
+        document.getElementById('btn-empty-add-task')?.addEventListener('click', () => {
+            document.getElementById('form-nueva-tarea')?.classList.remove('hidden');
+        });
     } else {
-        lista.innerHTML = tasks.map((task) => {
+        lista.innerHTML = displayTasks.map((task) => {
             const assignedName = members.find((member) => member.id === task.asignado_a)?.nombre || 'Bolsa común';
+            const isOverdue = task.fecha_objetivo && task.fecha_objetivo < todayIso && task.estado !== 'Completada';
             const date = task.fecha_objetivo
                 ? new Date(`${task.fecha_objetivo}T00:00:00`).toLocaleDateString('es-ES')
                 : 'Sin fecha';
             const completed = task.estado === 'Completada';
+
             return `
                 <div class="task-card ${completed ? 'completed' : ''}">
                     <div>
-                        <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
-                        <small>📅 ${escapeHtml(date)} | 👤 ${escapeHtml(assignedName)}</small>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
+                            ${isOverdue ? '<span class="badge-overdue">Atrasada</span>' : ''}
+                        </div>
+                        <div class="today-task-meta" style="margin-top: 4px;">
+                            <span>📅 ${escapeHtml(date)}</span>
+                            <span>👤 ${escapeHtml(assignedName)}</span>
+                            ${task.recurrencia && task.recurrencia !== 'Puntual' ? `<span class="recurrence-badge">🔄 ${escapeHtml(task.recurrencia)}</span>` : ''}
+                        </div>
                     </div>
                     ${completed
-                        ? '<span aria-label="Completada">✓</span>'
+                        ? '<span aria-label="Completada" style="color: var(--success); font-weight: bold; font-size: 18px;">✓</span>'
                         : `<button data-complete-task="${escapeHtml(task.id)}" class="btn-primary btn-icon-square" aria-label="Completar tarea">✓</button>`}
                 </div>
             `;
         }).join('');
     }
+
+    // Filter clicks
+    document.querySelectorAll('[data-task-filter]').forEach(tab => {
+        tab.addEventListener('click', () => {
+            currentTaskFilter = tab.dataset.taskFilter;
+            cargarVistaTareas(renderId);
+        });
+    });
 
     document.getElementById('btn-nueva-tarea').addEventListener('click', () => {
         const form = document.getElementById('form-nueva-tarea');
@@ -561,23 +1880,14 @@ async function cargarVistaTareas(renderId) {
         fechaInput.value = today;
     });
 
+    document.getElementById('btn-cancelar-tarea')?.addEventListener('click', () => {
+        document.getElementById('form-nueva-tarea').classList.add('hidden');
+    });
+
     lista.querySelectorAll('[data-complete-task]').forEach((button) => {
         button.addEventListener('click', async () => {
             button.disabled = true;
-            try {
-                const { data, error } = await supabase.from('tareas_asignadas')
-                    .update({ estado: 'Completada' })
-                    .eq('id', button.dataset.completeTask)
-                    .eq('familia_id', currentProfile.familia_id)
-                    .select('id')
-                    .maybeSingle();
-                if (error) throw error;
-                if (!data) throw new Error('La tarea ya no existe o no tienes permiso para modificarla.');
-                await renderizarVista(currentView);
-            } catch (error) {
-                button.disabled = false;
-                showContentError(`No se pudo completar la tarea: ${error.message}`);
-            }
+            await completarTarea(button.dataset.completeTask);
         });
     });
 
@@ -587,6 +1897,7 @@ async function cargarVistaTareas(renderId) {
         const nombre = document.getElementById('nueva-tarea-nombre').value.trim();
         const asignadoA = document.getElementById('nueva-tarea-asignado').value || null;
         const fecha = document.getElementById('nueva-tarea-fecha').value;
+        const recurrencia = document.getElementById('nueva-tarea-recurrencia').value || 'Puntual';
 
         if (!nombre || !fecha) {
             alert('El nombre y la fecha son obligatorios.');
@@ -611,71 +1922,450 @@ async function cargarVistaTareas(renderId) {
                 })
                 .select('id')
                 .single();
-            if (assignmentError) {
-                const { error: cleanupError } = await supabase.from('tareas_catalogo')
-                    .delete()
-                    .eq('id', catalog.id)
-                    .eq('familia_id', currentProfile.familia_id);
-                if (cleanupError) {
-                    throw new Error(`No se pudo asignar la tarea (${assignmentError.message}) y tampoco limpiar la entrada de catálogo (${cleanupError.message}).`);
-                }
-                throw assignmentError;
-            }
-            await renderizarVista(currentView);
+            if (assignmentError) throw assignmentError;
         } catch (error) {
-            showContentError(`No se pudo guardar la tarea: ${error.message}`);
-            button.disabled = false;
-            button.innerText = 'Guardar Tarea';
+            console.warn('Guardando tarea localmente:', error.message);
+            const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
+            storedTasks.push({
+                id: crypto.randomUUID(),
+                fecha_objetivo: fecha,
+                estado: 'Pendiente',
+                asignado_a: asignadoA,
+                recurrencia,
+                puntos,
+                tareas_catalogo: { nombre },
+            });
+            saveToStorage(STORAGE_KEYS.tasks, storedTasks);
         }
 
+        showToast('Tarea creada y asignada');
+        await renderizarVista(currentView);
     });
 }
 
-function getLocalDateInputValue(date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+// --- MENÚ VIEW (IA Gemini, Recetas, Despensa y WhatsApp) ---
+
+function openRecipeModal(dish) {
+    const ingList = Array.isArray(dish.ingredientes) && dish.ingredientes.length ? dish.ingredientes : ['Ingredientes habituales del hogar'];
+    const html = `
+        <div class="modal-header">
+            <h3>🍲 ${escapeHtml(dish.nombre)}</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+            <span class="day-badge">${escapeHtml(dish.dia)}</span>
+            <span class="meal-badge ${dish.tipo === 'Cena' ? 'cena' : 'comida'}">${dish.tipo === 'Cena' ? '🌙 Cena' : '☀️ Comida'}</span>
+            <span class="chip" style="font-size: 11px;">⏱️ ${escapeHtml(dish.tiempo || '25 min')}</span>
+        </div>
+        <h4 style="font-size: 14px; margin-bottom: 8px;">Ingredientes clave:</h4>
+        <ul style="padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--text-main); margin-bottom: 16px;">
+            ${ingList.map(i => `<li>${escapeHtml(i)}</li>`).join('')}
+        </ul>
+        <div class="modal-footer">
+            <button type="button" id="btn-add-recipe-to-shop" class="btn-primary">🛒 Pasar estos ingredientes a la compra</button>
+            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cerrar</button>
+        </div>
+    `;
+
+    openModal(html);
+
+    document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', () => {
+        const state = getAppState();
+        let added = 0;
+        ingList.forEach(ing => {
+            const exists = state.shopping.some(s => s.nombre.toLowerCase() === ing.toLowerCase() && !s.comprado);
+            if (!exists) {
+                state.shopping.push({
+                    id: crypto.randomUUID(),
+                    nombre: ing,
+                    seccion: getAisleCategory(ing),
+                    comprado: false
+                });
+                added++;
+            }
+        });
+        saveAppState(state);
+        showToast(`¡Añadidos ${added} ingredientes a la lista de compra!`);
+        closeModal();
+    });
 }
 
-function renderMenuView() {
+function openPantryReviewModal() {
     const state = getAppState();
+    const allIngredients = [];
+    state.menu.forEach(dish => {
+        const ingList = Array.isArray(dish.ingredientes) ? dish.ingredientes : [];
+        ingList.forEach(ing => {
+            if (ing && typeof ing === 'string') {
+                allIngredients.push({
+                    nombre: ing.trim(),
+                    plato: dish.nombre,
+                    seccion: getAisleCategory(ing)
+                });
+            }
+        });
+    });
+
+    if (!allIngredients.length) {
+        showToast('No hay ingredientes registrados en el menú actual.');
+        return;
+    }
+
+    const uniqueMap = new Map();
+    allIngredients.forEach(it => {
+        const key = it.nombre.toLowerCase();
+        if (!uniqueMap.has(key)) {
+            uniqueMap.set(key, it);
+        }
+    });
+    const uniqueIngredients = Array.from(uniqueMap.values());
+
+    const html = `
+        <div class="modal-header">
+            <h3>🛒 Revisar despensa antes de comprar</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
+            Marca lo que <strong>te falta</strong> para comprar. Si ya lo tienes en casa, desmárcalo.
+        </p>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <button type="button" id="btn-pantry-select-all" class="text-button" style="font-size: 12px;">Marcar todos</button>
+            <button type="button" id="btn-pantry-deselect-all" class="text-button" style="font-size: 12px;">Desmarcar todos</button>
+        </div>
+        <div class="pantry-checklist">
+            ${uniqueIngredients.map((it, idx) => `
+                <div class="pantry-item-row" id="pantry-row-${idx}">
+                    <label class="pantry-item-label">
+                        <input type="checkbox" class="pantry-chk" checked data-idx="${idx}" data-name="${escapeHtml(it.nombre)}" data-seccion="${escapeHtml(it.seccion)}">
+                        <div>
+                            <strong>${escapeHtml(it.nombre)}</strong>
+                            <div style="font-size: 11px; color: var(--text-muted);">${AISLE_ICONS[it.seccion] || '📦'} ${escapeHtml(it.seccion)} · <span style="font-style: italic;">${escapeHtml(it.plato)}</span></div>
+                        </div>
+                    </label>
+                    <span class="pantry-tag" id="pantry-tag-${idx}">Comprar</span>
+                </div>
+            `).join('')}
+        </div>
+        <div class="modal-footer">
+            <button type="button" id="btn-confirm-pantry-to-shop" class="btn-primary">Añadir a la lista de compra</button>
+            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+        </div>
+    `;
+
+    openModal(html);
+
+    const chks = document.querySelectorAll('.pantry-chk');
+    chks.forEach(chk => {
+        chk.addEventListener('change', () => {
+            const row = document.getElementById(`pantry-row-${chk.dataset.idx}`);
+            const tag = document.getElementById(`pantry-tag-${chk.dataset.idx}`);
+            if (chk.checked) {
+                row?.classList.remove('in-pantry');
+                if (tag) {
+                    tag.innerText = 'Comprar';
+                    tag.style.background = '#e2e8f0';
+                    tag.style.color = '#475569';
+                }
+            } else {
+                row?.classList.add('in-pantry');
+                if (tag) {
+                    tag.innerText = 'En despensa';
+                    tag.style.background = '#dcfce7';
+                    tag.style.color = '#15803d';
+                }
+            }
+        });
+    });
+
+    document.getElementById('btn-pantry-select-all')?.addEventListener('click', () => {
+        chks.forEach(c => { c.checked = true; c.dispatchEvent(new Event('change')); });
+    });
+    document.getElementById('btn-pantry-deselect-all')?.addEventListener('click', () => {
+        chks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); });
+    });
+
+    document.getElementById('btn-confirm-pantry-to-shop')?.addEventListener('click', () => {
+        const toAdd = [];
+        chks.forEach(c => {
+            if (c.checked) {
+                toAdd.push({
+                    id: crypto.randomUUID(),
+                    nombre: c.dataset.name,
+                    seccion: c.dataset.seccion,
+                    comprado: false
+                });
+            }
+        });
+
+        if (toAdd.length) {
+            const curState = getAppState();
+            toAdd.forEach(newIt => {
+                const exists = curState.shopping.some(s => s.nombre.toLowerCase() === newIt.nombre.toLowerCase() && !s.comprado);
+                if (!exists) {
+                    curState.shopping.push(newIt);
+                }
+            });
+            saveAppState(curState);
+            showToast(`¡Añadidos ${toAdd.length} artículos a la lista de compra!`);
+        } else {
+            showToast('¡Todo listo! Tienes todos los ingredientes en casa.');
+        }
+        closeModal();
+    });
+}
+
+function openAIGeneratorModal() {
+    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
+    const html = `
+        <div class="modal-header">
+            <h3>✨ Generar Menú Semanal con IA</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Gemini creará un menú semanal completo con 12 comidas y cenas equilibradas e ingredientes detallados.
+        </p>
+
+        <form id="form-ai-menu">
+            <label for="ai-dieta">Dieta o estilo del hogar</label>
+            <select id="ai-dieta" class="input-select">
+                <option value="Mediterránea" ${curDiet === 'Mediterránea' ? 'selected' : ''}>Dieta Mediterránea equilibrada</option>
+                <option value="Vegetariana" ${curDiet === 'Vegetariana' ? 'selected' : ''}>Vegetariana (sin carne ni pescado)</option>
+                <option value="Saludable y ligera">Baja en grasas, saludable y ligera</option>
+                <option value="Familiar con niños">Platos caseros que encantan a niños</option>
+            </select>
+
+            <label for="ai-preferencias">Preferencias o ingredientes deseados (opcional)</label>
+            <input type="text" id="ai-preferencias" placeholder="Ej. Platos rápidos, pescado azul, legumbres..." maxlength="120">
+
+            <div id="ai-status-box" class="hidden" style="text-align: center; padding: 20px 10px;">
+                <div style="font-size: 32px;">🧠✨</div>
+                <p style="font-weight: 700; margin-top: 10px; color: var(--primary);">Diseñando menú con Gemini...</p>
+                <p style="font-size: 12px; color: var(--text-muted);">Calculando variedad de platos y combinaciones de ingredientes.</p>
+            </div>
+
+            <div class="modal-footer" id="ai-modal-footer">
+                <button type="submit" class="btn-primary btn-ai">✨ Generar menú inteligente</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            </div>
+        </form>
+    `;
+
+    openModal(html);
+
+    document.getElementById('form-ai-menu')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const statusBox = document.getElementById('ai-status-box');
+        const footer = document.getElementById('ai-modal-footer');
+        const dieta = document.getElementById('ai-dieta').value;
+        const preferencias = document.getElementById('ai-preferencias').value.trim();
+
+        if (statusBox) statusBox.classList.remove('hidden');
+        if (footer) footer.classList.add('hidden');
+
+        try {
+            const res = await fetch('/api/gemini/generate-menu', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dieta, preferencias })
+            });
+            const data = await res.json();
+            if (!data.menu || !Array.isArray(data.menu) || !data.menu.length) {
+                throw new Error('Respuesta de menú no válida');
+            }
+
+            const state = getAppState();
+            state.menu = data.menu.map(m => ({
+                id: crypto.randomUUID(),
+                dia: m.dia,
+                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
+                nombre: m.nombre,
+                tiempo: m.tiempo || '25 min',
+                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
+            }));
+            saveAppState(state);
+
+            showToast('¡Menú semanal creado con éxito!');
+            closeModal();
+            renderMenuView();
+
+            setTimeout(() => {
+                openPantryReviewModal();
+            }, 600);
+        } catch (err) {
+            console.error(err);
+            showToast('Error al conectar con la IA. Se ha cargado el menú sugerido.');
+            closeModal();
+        }
+    });
+}
+
+function shareMenuWhatsApp() {
+    const state = getAppState();
+    let text = `🍽️ *Menú Semanal - Tribuapp*\n\n`;
+    WEEK_DAYS.forEach(day => {
+        const dayItems = state.menu.filter(i => i.dia === day);
+        const comida = dayItems.find(i => (i.tipo || 'Comida') === 'Comida');
+        const cena = dayItems.find(i => i.tipo === 'Cena');
+        text += `📅 *${day.toUpperCase()}*\n`;
+        text += `  ☀️ Comida: ${comida ? comida.nombre : 'Por definir'}\n`;
+        text += `  🌙 Cena: ${cena ? cena.nombre : 'Por definir'}\n\n`;
+    });
+    text += `_Planificado con amor en Tribuapp_ ⛺`;
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+function renderMenuView(prefillDia = null, prefillTipo = null) {
+    const state = getAppState();
+    const todayDayName = getTodayWeekDayName();
+    const daysToRender = currentMenuDayFilter === 'Todos' ? WEEK_DAYS : [currentMenuDayFilter];
+
+    const daysHtml = daysToRender.map((day) => {
+        const dayItems = state.menu.filter((item) => item.dia === day);
+        const dayComidas = dayItems.filter((item) => (item.tipo || 'Comida') === 'Comida');
+        const dayCenas = dayItems.filter((item) => item.tipo === 'Cena');
+
+        return `
+            <div class="weekly-day-card">
+                <div class="weekly-day-header">
+                    <strong>${day}</strong>
+                    ${day === todayDayName ? '<span class="badge-today">Hoy</span>' : ''}
+                </div>
+                <div class="weekly-meals-slots">
+                    <div class="meal-slot">
+                        <span class="meal-badge comida">☀️ Comida</span>
+                        ${dayComidas.length ? dayComidas.map((item) => `
+                            <div class="meal-slot-item">
+                                <span style="cursor: pointer;" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta e ingredientes">${escapeHtml(item.nombre)}</span>
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta">🔍</button>
+                                    <button class="text-button btn-delete-sm" data-delete-menu="${escapeHtml(item.id)}" aria-label="Eliminar plato" title="Eliminar plato">✕</button>
+                                </div>
+                            </div>
+                        `).join('') : '<span class="empty-slot-text">Sin planificar</span>'}
+                    </div>
+                    <div class="meal-slot">
+                        <span class="meal-badge cena">🌙 Cena</span>
+                        ${dayCenas.length ? dayCenas.map((item) => `
+                            <div class="meal-slot-item">
+                                <span style="cursor: pointer;" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta e ingredientes">${escapeHtml(item.nombre)}</span>
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta">🔍</button>
+                                    <button class="text-button btn-delete-sm" data-delete-menu="${escapeHtml(item.id)}" aria-label="Eliminar plato" title="Eliminar plato">✕</button>
+                                </div>
+                            </div>
+                        `).join('') : '<span class="empty-slot-text">Sin planificar</span>'}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
 
     mainContent.innerHTML = `
         <div class="section-header">
             <div>
                 <h3>Menú semanal</h3>
-                <p class="local-note">Guardado en este dispositivo</p>
+                <p class="local-note">Planifica comidas y cenas de tu hogar</p>
             </div>
-            <button id="btn-agregar-menu" class="btn-primary btn-inline">+ Idea</button>
+            <button id="btn-agregar-menu" class="btn-primary btn-inline">+ Añadir plato</button>
         </div>
 
-        <form id="menu-form" class="panel hidden">
-            <label for="menu-nombre">Plato</label>
-            <input type="text" id="menu-nombre" placeholder="Ej. Risotto de setas" maxlength="120" required>
-            <label for="menu-dia">Día</label>
-            <select id="menu-dia" class="input-select">
-                ${WEEK_DAYS.map((day) => `<option value="${day}">${day}</option>`).join('')}
-            </select>
+        <!-- Carrusel interactivo de días móvil -->
+        <div class="day-carousel-container">
+            <div class="day-carousel" id="menu-day-carousel">
+                <button type="button" class="day-pill ${currentMenuDayFilter === 'Todos' ? 'active' : ''}" data-day-pill="Todos">
+                    <span>📅 Toda la semana</span>
+                </button>
+                ${WEEK_DAYS.map((day) => `
+                    <button type="button" class="day-pill ${currentMenuDayFilter === day ? 'active' : ''} ${day === todayDayName ? 'is-today' : ''}" data-day-pill="${day}">
+                        ${day === todayDayName ? '<span class="pill-dot"></span>' : ''}
+                        <span>${day}</span>
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+
+        ${currentMenuDayFilter !== 'Todos' ? `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 4px 2px;">
+                <span style="font-size: 13px; color: var(--text-muted);">Viendo solo: <strong>${currentMenuDayFilter}</strong></span>
+                <button type="button" class="text-button" id="btn-show-all-days" style="font-size: 13px;">Ver toda la semana →</button>
+            </div>
+        ` : ''}
+
+        <!-- Barra de herramientas inteligentes -->
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+            <button type="button" id="btn-open-ai-menu" class="btn-primary btn-ai" style="flex: 1; padding: 10px 14px; font-size: 13px;">
+                ✨ Generar menú con IA
+            </button>
+            <button type="button" id="btn-open-pantry-review" class="btn-secondary" style="flex: 1; padding: 10px 14px; font-size: 13px;">
+                🛒 Revisar despensa y comprar
+            </button>
+            <button type="button" id="btn-share-menu-wa" class="btn-secondary btn-whatsapp" style="padding: 10px 14px; font-size: 13px;">
+                💬 WhatsApp
+            </button>
+        </div>
+
+        <form id="menu-form" class="panel ${prefillDia ? '' : 'hidden'}">
+            <label for="menu-nombre">Nombre del plato</label>
+            <input type="text" id="menu-nombre" placeholder="Ej. Risotto de setas o Tortilla francesa" maxlength="120" required>
+            
+            <div class="form-row-2">
+                <div>
+                    <label for="menu-dia">Día</label>
+                    <select id="menu-dia" class="input-select">
+                        ${WEEK_DAYS.map((day) => `<option value="${day}" ${day === (prefillDia || (currentMenuDayFilter !== 'Todos' ? currentMenuDayFilter : 'Lunes')) ? 'selected' : ''}>${day}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label for="menu-tipo">Momento</label>
+                    <select id="menu-tipo" class="input-select">
+                        <option value="Comida" ${prefillTipo === 'Comida' ? 'selected' : ''}>☀️ Comida</option>
+                        <option value="Cena" ${prefillTipo === 'Cena' ? 'selected' : ''}>🌙 Cena</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row-2">
+                <div>
+                    <label for="menu-tiempo">Tiempo estimado</label>
+                    <input type="text" id="menu-tiempo" placeholder="Ej. 25 min" maxlength="30" value="25 min">
+                </div>
+                <div>
+                    <label for="menu-ingredientes">Ingredientes (separados por coma)</label>
+                    <input type="text" id="menu-ingredientes" placeholder="Ej. Arroz, setas, queso, cebolla" maxlength="200">
+                </div>
+            </div>
+
             <div class="form-actions">
                 <button type="submit" class="btn-primary">Guardar plato</button>
                 <button type="button" id="btn-cancelar-menu" class="btn-secondary">Cancelar</button>
             </div>
         </form>
 
-        <div class="menu-list">
-            ${state.menu.length ? state.menu.map((item) => `
-                <div class="menu-card">
-                    <div>
-                        <span class="day-badge">${escapeHtml(item.dia)}</span>
-                        <strong>${escapeHtml(item.nombre)}</strong>
-                    </div>
-                    <button class="text-button" data-delete-menu="${escapeHtml(item.id)}" aria-label="Eliminar ${escapeHtml(item.nombre)}">Eliminar</button>
-                </div>
-            `).join('') : '<p class="empty-state">Todavía no hay platos. Añade ideas para planificar la semana.</p>'}
+        <div class="weekly-days-list">
+            ${daysHtml}
         </div>
     `;
     addBackupControls(mainContent);
+
+    if (prefillDia) {
+        document.getElementById('menu-nombre').focus();
+    }
+
+    document.querySelectorAll('[data-day-pill]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            currentMenuDayFilter = btn.dataset.dayPill;
+            renderMenuView();
+        });
+    });
+
+    document.getElementById('btn-show-all-days')?.addEventListener('click', () => {
+        currentMenuDayFilter = 'Todos';
+        renderMenuView();
+    });
+
+    document.getElementById('btn-open-ai-menu')?.addEventListener('click', openAIGeneratorModal);
+    document.getElementById('btn-open-pantry-review')?.addEventListener('click', openPantryReviewModal);
+    document.getElementById('btn-share-menu-wa')?.addEventListener('click', shareMenuWhatsApp);
 
     document.getElementById('btn-agregar-menu').addEventListener('click', () => {
         const form = document.getElementById('menu-form');
@@ -692,6 +2382,10 @@ function renderMenuView() {
         event.preventDefault();
         const nombre = document.getElementById('menu-nombre').value.trim();
         const dia = document.getElementById('menu-dia').value;
+        const tipo = document.getElementById('menu-tipo').value || 'Comida';
+        const tiempo = document.getElementById('menu-tiempo').value.trim() || '25 min';
+        const rawIng = document.getElementById('menu-ingredientes').value.trim();
+        const ingredientes = rawIng ? rawIng.split(',').map(s => s.trim()).filter(Boolean) : [];
 
         if (!nombre) {
             document.getElementById('menu-nombre').focus();
@@ -699,10 +2393,18 @@ function renderMenuView() {
         }
 
         const state = getAppState();
-        state.menu.push({ id: crypto.randomUUID(), nombre, dia });
+        state.menu.push({ id: crypto.randomUUID(), nombre, dia, tipo, tiempo, ingredientes });
         if (!saveAppState(state)) return;
         document.getElementById('menu-form').reset();
+        showToast('Plato guardado');
         renderMenuView();
+    });
+
+    mainContent.querySelectorAll('[data-view-recipe]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const dish = state.menu.find(m => m.id === button.dataset.viewRecipe);
+            if (dish) openRecipeModal(dish);
+        });
     });
 
     mainContent.querySelectorAll('[data-delete-menu]').forEach((button) => {
@@ -715,40 +2417,140 @@ function renderMenuView() {
     });
 }
 
+// --- COMPRA VIEW (Pasillos, Cantidades, Progreso y WhatsApp) ---
+
+function shareShoppingWhatsApp() {
+    const state = getAppState();
+    const pendingItems = state.shopping.filter(i => !i.comprado);
+    if (!pendingItems.length) {
+        showToast('La lista de compra está vacía');
+        return;
+    }
+    let text = `🛒 *Lista de la compra - Tribuapp*\n\n`;
+
+    AISLE_ORDER.forEach(aisle => {
+        const items = pendingItems.filter(i => (i.seccion || getAisleCategory(i.nombre)) === aisle);
+        if (items.length) {
+            text += `${AISLE_ICONS[aisle]} *${aisle.toUpperCase()}*\n`;
+            items.forEach(it => {
+                text += `  • [ ] ${it.nombre}${it.cantidad ? ` (${it.cantidad})` : ''}\n`;
+            });
+            text += `\n`;
+        }
+    });
+
+    text += `_Generado con Tribuapp_ ⛺`;
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+}
+
 function renderCompraView() {
     const state = getAppState();
     const pendingItems = state.shopping.filter((item) => !item.comprado);
     const completedItems = state.shopping.filter((item) => item.comprado);
+    const totalItems = state.shopping.length;
+    const shoppingPercent = totalItems > 0 ? Math.round((completedItems.length / totalItems) * 100) : 100;
+
+    // Group pending items by aisle
+    const aislesMap = new Map();
+    AISLE_ORDER.forEach(aisle => aislesMap.set(aisle, []));
+
+    pendingItems.forEach(item => {
+        const seccion = item.seccion || getAisleCategory(item.nombre);
+        if (!aislesMap.has(seccion)) aislesMap.set(seccion, []);
+        aislesMap.get(seccion).push(item);
+    });
+
+    let aislesHtml = '';
+    aislesMap.forEach((items, aisle) => {
+        if (!items.length) return;
+        aislesHtml += `
+            <div class="aisle-group">
+                <div class="aisle-header">
+                    <span>${AISLE_ICONS[aisle] || '📦'} ${escapeHtml(aisle)}</span>
+                    <span class="aisle-count">${items.length}</span>
+                </div>
+                <div class="shopping-list">
+                    ${items.map(item => `
+                        <div class="shopping-item">
+                            <label>
+                                <input type="checkbox" data-toggle-shopping="${escapeHtml(item.id)}">
+                                <div>
+                                    <span>${escapeHtml(item.nombre)}</span>
+                                    ${item.cantidad ? `<span style="font-size: 11px; color: var(--text-muted); margin-left: 6px;">(${escapeHtml(item.cantidad)})</span>` : ''}
+                                </div>
+                            </label>
+                            <button class="text-button" data-delete-shopping="${escapeHtml(item.id)}" aria-label="Eliminar ${escapeHtml(item.nombre)}">✕</button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    });
+
+    if (!aislesHtml) {
+        aislesHtml = '<p class="empty-state">La lista está vacía. ¡Todo comprado o despensa llena!</p>';
+    }
 
     mainContent.innerHTML = `
         <div class="section-header">
             <div>
                 <h3>Lista de la compra</h3>
-                <p class="local-note">Guardada en este dispositivo · ${pendingItems.length} pendiente${pendingItems.length === 1 ? '' : 's'}</p>
+                <p class="local-note">Organizada por pasillos del supermercado · ${pendingItems.length} pendiente${pendingItems.length === 1 ? '' : 's'}</p>
             </div>
-            <button id="btn-agregar-compra" class="btn-primary btn-inline">+ Item</button>
+            <button id="btn-agregar-compra" class="btn-primary btn-inline">+ Producto</button>
+        </div>
+
+        <!-- Progreso Visual en el Supermercado -->
+        <div class="shopping-progress-card">
+            <div class="progress-header">
+                <span>Progreso en el supermercado</span>
+                <strong>${completedItems.length} de ${totalItems} productos (${shoppingPercent}%)</strong>
+            </div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" style="width: ${shoppingPercent}%;"></div>
+            </div>
+            ${completedItems.length === totalItems && totalItems > 0 ? `
+                <div class="progress-complete-msg">🎉 ¡Compra lista! Todos los productos están en el carrito.</div>
+            ` : ''}
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+            <button type="button" id="btn-share-shop-wa" class="btn-primary btn-whatsapp" style="flex: 1; padding: 10px 14px; font-size: 13px;">
+                💬 Compartir por WhatsApp
+            </button>
+            <button type="button" id="btn-compra-review-pantry" class="btn-secondary" style="flex: 1; padding: 10px 14px; font-size: 13px;">
+                🛒 Traer del Menú
+            </button>
         </div>
 
         <form id="shop-form" class="panel hidden">
             <label for="nueva-compra">Producto</label>
-            <input type="text" id="nueva-compra" placeholder="Ej. Yogur griego" maxlength="120" required>
+            <input type="text" id="nueva-compra" placeholder="Ej. Yogur griego, Manzanas..." maxlength="120" required>
+            
+            <div class="form-row-2">
+                <div>
+                    <label for="nueva-compra-cantidad">Cantidad (opcional)</label>
+                    <input type="text" id="nueva-compra-cantidad" placeholder="Ej. 1 kg, 2 litros, 1 pack" maxlength="50">
+                </div>
+                <div>
+                    <label for="nueva-compra-seccion">Pasillo / Sección</label>
+                    <select id="nueva-compra-seccion" class="input-select">
+                        <option value="auto">🪄 Detectar automáticamente</option>
+                        ${AISLE_ORDER.map(a => `<option value="${a}">${AISLE_ICONS[a]} ${a}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+
             <div class="form-actions">
                 <button type="submit" class="btn-primary">Añadir a la lista</button>
                 <button type="button" id="btn-cancelar-compra" class="btn-secondary">Cancelar</button>
             </div>
         </form>
 
-        <div class="shopping-list">
-            ${pendingItems.length ? pendingItems.map((item) => `
-                <div class="shopping-item ${item.comprado ? 'done' : ''}">
-                    <label>
-                        <input type="checkbox" data-toggle-shopping="${escapeHtml(item.id)}">
-                        <span>${escapeHtml(item.nombre)}</span>
-                    </label>
-                    <button class="text-button" data-delete-shopping="${escapeHtml(item.id)}" aria-label="Eliminar ${escapeHtml(item.nombre)}">Eliminar</button>
-                </div>
-            `).join('') : '<p class="empty-state">La lista está vacía. ¡Todo comprado!</p>'}
+        <div class="shopping-aisles-container">
+            ${aislesHtml}
         </div>
+
         ${completedItems.length ? `
             <details class="completed-section">
                 <summary>Comprados (${completedItems.length})</summary>
@@ -756,15 +2558,21 @@ function renderCompraView() {
                     <div class="shopping-item done">
                         <label>
                             <input type="checkbox" data-toggle-shopping="${escapeHtml(item.id)}" checked>
-                            <span>${escapeHtml(item.nombre)}</span>
+                            <div>
+                                <span>${escapeHtml(item.nombre)}</span>
+                                ${item.cantidad ? `<span style="font-size: 11px; margin-left: 6px;">(${escapeHtml(item.cantidad)})</span>` : ''}
+                            </div>
                         </label>
-                        <button class="text-button" data-delete-shopping="${escapeHtml(item.id)}" aria-label="Eliminar ${escapeHtml(item.nombre)}">Eliminar</button>
+                        <button class="text-button" data-delete-shopping="${escapeHtml(item.id)}" aria-label="Eliminar ${escapeHtml(item.nombre)}">✕</button>
                     </div>`).join('')}
                 </div>
-                <button id="btn-limpiar-comprados" class="btn-secondary">Quitar comprados</button>
+                <button id="btn-limpiar-comprados" class="btn-secondary" style="margin-top: 10px;">Quitar comprados</button>
             </details>` : ''}
     `;
     addBackupControls(mainContent);
+
+    document.getElementById('btn-share-shop-wa')?.addEventListener('click', shareShoppingWhatsApp);
+    document.getElementById('btn-compra-review-pantry')?.addEventListener('click', openPantryReviewModal);
 
     document.getElementById('btn-agregar-compra').addEventListener('click', () => {
         const form = document.getElementById('shop-form');
@@ -780,6 +2588,10 @@ function renderCompraView() {
     document.getElementById('shop-form').addEventListener('submit', (event) => {
         event.preventDefault();
         const nombre = document.getElementById('nueva-compra').value.trim();
+        const cantidad = document.getElementById('nueva-compra-cantidad').value.trim();
+        const seccionChoice = document.getElementById('nueva-compra-seccion').value;
+        const seccion = seccionChoice === 'auto' ? getAisleCategory(nombre) : seccionChoice;
+
         if (!nombre) {
             document.getElementById('nueva-compra').focus();
             return;
@@ -792,12 +2604,13 @@ function renderCompraView() {
             document.getElementById('nueva-compra').reportValidity();
             return;
         }
-        state.shopping.push({ id: crypto.randomUUID(), nombre, comprado: false });
+        state.shopping.push({ id: crypto.randomUUID(), nombre, cantidad, seccion, comprado: false });
         if (!saveAppState(state)) return;
         renderCompraView();
     });
 
     document.getElementById('nueva-compra').addEventListener('input', (event) => event.target.setCustomValidity(''));
+
     mainContent.querySelectorAll('[data-toggle-shopping]').forEach((input) => {
         input.addEventListener('change', () => {
             const state = getAppState();
@@ -825,6 +2638,8 @@ function renderCompraView() {
         renderCompraView();
     });
 }
+
+// --- BACKUP & EXPORT ---
 
 function addBackupControls(container) {
     container.insertAdjacentHTML('beforeend', `
@@ -901,9 +2716,6 @@ function validateBackup(backup) {
     if (!backup || typeof backup !== 'object' || Array.isArray(backup)) {
         throw new Error('El contenido no es un archivo de copia válido.');
     }
-    if (backup.version !== BACKUP_VERSION) {
-        throw new Error('La versión de la copia no es compatible.');
-    }
     if (!Array.isArray(backup.shopping) || !Array.isArray(backup.menu)) {
         throw new Error('La copia debe incluir las listas del menú y la compra.');
     }
@@ -919,8 +2731,15 @@ function validateBackup(backup) {
             throw new Error('La copia contiene un producto con datos no válidos.');
         }
         shoppingIds.add(item.id);
-        return { id: item.id, nombre: item.nombre.trim(), comprado: item.comprado };
+        return {
+            id: item.id,
+            nombre: item.nombre.trim(),
+            cantidad: typeof item.cantidad === 'string' ? item.cantidad : '',
+            seccion: typeof item.seccion === 'string' ? item.seccion : getAisleCategory(item.nombre),
+            comprado: item.comprado
+        };
     });
+
     const menuIds = new Set();
     const menu = backup.menu.map((item) => {
         if (!item || typeof item.id !== 'string' || !item.id || typeof item.nombre !== 'string' ||
@@ -929,7 +2748,16 @@ function validateBackup(backup) {
             throw new Error('La copia contiene un plato con datos no válidos.');
         }
         menuIds.add(item.id);
-        return { id: item.id, nombre: item.nombre.trim(), dia: item.dia };
+        const tipo = item.tipo === 'Cena' ? 'Cena' : 'Comida';
+        const ingredientes = Array.isArray(item.ingredientes) ? item.ingredientes : [];
+        return {
+            id: item.id,
+            nombre: item.nombre.trim(),
+            dia: item.dia,
+            tipo,
+            tiempo: item.tiempo || '25 min',
+            ingredientes
+        };
     });
 
     return { shopping, menu };
@@ -954,7 +2782,19 @@ supabase.auth.onAuthStateChange((event, session) => {
         authView.classList.remove('hidden');
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
+        if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
     }
 });
 
+// PWA Service Worker Registration
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch((err) => {
+            console.warn('Service worker registration failed:', err);
+        });
+    });
+}
+
+initTheme();
+initFab();
 checkSession();

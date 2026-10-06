@@ -7,6 +7,12 @@
     <meta name="description" content="Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.">
     <meta property="og:title" content="Tribuapp - Gestión Familiar">
     <meta property="og:description" content="Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4F46E5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Tribuapp">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,6 +22,11 @@
         <div class="auth-card">
             <h1>⛺ Tribuapp</h1>
             <p>Gestiona tu hogar de forma inteligente</p>
+
+            <div id="invite-welcome-banner" class="alert-banner hidden" style="text-align: left; margin-bottom: 16px;">
+                <span>👋</span>
+                <span id="invite-welcome-text">¡Te han invitado a una tribu familiar! Inicia sesión o regístrate para entrar.</span>
+            </div>
             
             <form id="auth-form">
                 <label for="email">Correo electrónico</label>
@@ -27,6 +38,7 @@
             <p id="auth-error" class="error-text hidden" role="alert"></p>
             <p id="auth-message" class="success-text hidden" role="status"></p>
             <div class="auth-actions">
+                <button type="button" id="btn-demo-login" class="btn-demo">⚡ Iniciar con usuario de prueba</button>
                 <button type="button" id="btn-auth-mode" class="text-button">¿No tienes cuenta? Regístrate</button>
                 <button type="button" id="btn-reset-password" class="text-button">He olvidado mi contraseña</button>
             </div>
@@ -42,21 +54,46 @@
         </div>
     </div>
 
-    <!-- PANTALLA 2: ONBOARDING (Solo para usuarios nuevos) -->
+    <!-- PANTALLA 2: ONBOARDING (Para usuarios nuevos o invitados) -->
     <div id="onboarding-view" class="view-container hidden">
         <div class="auth-card">
-            <h2>⛺ Crea tu Tribu</h2>
-            <p>Configura el perfil de tu hogar para empezar.</p>
-            
-            <form id="onboarding-form">
+            <h2 id="onboarding-title">⛺ Tu Tribu Familiar</h2>
+            <p id="onboarding-subtitle">Configura o únete a tu hogar para empezar.</p>
+
+            <div class="filter-tabs" style="justify-content: center; margin-bottom: 20px;">
+                <button type="button" class="filter-tab active" id="tab-join-tribu">Unirme a una Tribu</button>
+                <button type="button" class="filter-tab" id="tab-create-tribu">Crear nueva</button>
+            </div>
+
+            <!-- Formulario 1: Unirme a una tribu existente -->
+            <form id="join-tribu-form">
+                <div id="invite-detected-banner" class="alert-banner hidden" style="text-align: left; margin-bottom: 14px;">
+                    <span>⛺</span>
+                    <span id="invite-detected-text">Te estás uniendo a la tribu familiar</span>
+                </div>
+
+                <label for="join-codigo">Código o identificador de la Tribu</label>
+                <input type="text" id="join-codigo" placeholder="Ej. TRIBU-ABC123 o ID de familia" required>
+
+                <label for="join-nombre-usuario">Tu nombre o apodo en la familia</label>
+                <input type="text" id="join-nombre-usuario" placeholder="Ej. Mamá, Carlos, Laura..." required>
+
+                <button type="submit" id="btn-join-tribu" class="btn-primary">Unirme a la Tribu</button>
+            </form>
+
+            <!-- Formulario 2: Crear una nueva tribu -->
+            <form id="onboarding-form" class="hidden">
+                <label for="tribu-nombre">Nombre de tu hogar</label>
                 <input type="text" id="tribu-nombre" placeholder="Nombre (ej. Los García)" required>
                 
+                <label for="tribu-dieta">Dieta base</label>
                 <select id="tribu-dieta" class="input-select" required>
                     <option value="Mediterránea">Dieta Mediterránea</option>
                     <option value="Vegetariana">Vegetariana</option>
                     <option value="Sin alergias">Libre (De todo)</option>
                 </select>
 
+                <label for="tribu-flexibilidad">Planificación</label>
                 <select id="tribu-flexibilidad" class="input-select" required>
                     <option value="Flexible">Somos Flexibles</option>
                     <option value="Estricta">Planificación Estricta</option>
@@ -72,14 +109,40 @@
     <div id="app-view" class="view-container hidden">
         <!-- Header superior -->
         <header class="app-header">
-            <h2 id="view-title">Dashboard</h2>
-            <button id="btn-logout" class="btn-icon" title="Cerrar sesión" aria-label="Cerrar sesión">🚪</button>
+            <div class="header-left">
+                <h2 id="view-title">Dashboard</h2>
+                <span id="header-tribe-badge" class="header-tribe-chip hidden">⛺ Tribu</span>
+            </div>
+            <div class="header-actions">
+                <button id="btn-theme-toggle" class="btn-icon" title="Modo Oscuro / Claro" aria-label="Modo Oscuro / Claro">🌙</button>
+                <button id="btn-invite-family" class="btn-icon" title="Invitar a tu tribu" aria-label="Invitar a tu tribu">👥</button>
+                <button id="btn-logout" class="btn-icon" title="Cerrar sesión" aria-label="Cerrar sesión">🚪</button>
+            </div>
         </header>
 
         <!-- Contenedor dinámico donde inyectaremos las vistas -->
         <main id="main-content" class="app-content">
             <!-- El contenido se inyecta desde JavaScript -->
         </main>
+
+        <!-- Botón de acción rápida flotante (FAB) -->
+        <div class="fab-wrapper" id="fab-wrapper">
+            <div class="fab-menu hidden" id="fab-menu">
+                <button type="button" class="fab-item" id="fab-add-shop">
+                    <span class="fab-item-label">Añadir a la compra</span>
+                    <span class="fab-item-icon">🛒</span>
+                </button>
+                <button type="button" class="fab-item" id="fab-add-task">
+                    <span class="fab-item-label">Nueva tarea</span>
+                    <span class="fab-item-icon">✅</span>
+                </button>
+                <button type="button" class="fab-item" id="fab-add-meal">
+                    <span class="fab-item-label">Añadir plato</span>
+                    <span class="fab-item-icon">🍽️</span>
+                </button>
+            </div>
+            <button type="button" class="fab-main-btn" id="fab-main-btn" aria-label="Acción rápida" title="Acción rápida">+</button>
+        </div>
 
         <!-- Barra de navegación inferior (Mobile-First) -->
         <nav class="bottom-nav">
@@ -101,6 +164,14 @@
             </button>
         </nav>
     </div>
+
+    <!-- Modal global para IA, Despensa e Invitación -->
+    <div id="modal-container" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal-card" id="modal-card-content"></div>
+    </div>
+
+    <!-- Toast feedback flotante -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
     <!-- Lógica de la aplicación cargada como módulo ES -->
     <script type="module" src="app.js"></script>
