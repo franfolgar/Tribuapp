@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v1';
+const CACHE_NAME = 'tribuapp-v2';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -59,4 +59,78 @@ self.addEventListener('fetch', (event) => {
       return cachedResponse || fetchPromise;
     })
   );
+});
+
+// --- PUSH & NOTIFICATIONS MANAGEMENT VIA SERVICE WORKER ---
+
+// Listen for incoming Push events (Web Push Protocol)
+self.addEventListener('push', (event) => {
+  let data = {};
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (e) {
+      data = { title: 'Tribuapp', body: event.data.text() };
+    }
+  } else {
+    data = { title: 'Tribuapp', body: 'Novedades en tu tribu familiar' };
+  }
+
+  const title = data.title || '⛺ Tribuapp Familiar';
+  const options = {
+    body: data.body || 'Tienes tareas pendientes o novedades en el menú.',
+    icon: data.icon || './icon-192.png',
+    badge: data.badge || './icon-192.png',
+    vibrate: [120, 60, 120],
+    data: {
+      url: data.url || './',
+      view: data.view || 'dashboard',
+      timestamp: Date.now()
+    },
+    tag: data.tag || 'tribuapp-notification',
+    renotify: true
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Handle notification click: focus app window and route to the corresponding view
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetView = event.notification.data?.view || 'dashboard';
+  const targetUrl = event.notification.data?.url || './';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          if (targetView && 'postMessage' in client) {
+            client.postMessage({ type: 'NAVIGATE_VIEW', targetView });
+          }
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+
+// Listen for messages from client page to show a notification via Service Worker
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+
+  if (event.data.type === 'SHOW_NOTIFICATION') {
+    const { title, options = {} } = event.data;
+    const notificationOptions = {
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      vibrate: [100, 50, 100],
+      ...options
+    };
+    event.waitUntil(
+      self.registration.showNotification(title || '⛺ Tribuapp', notificationOptions)
+    );
+  }
 });

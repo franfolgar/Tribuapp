@@ -235,6 +235,7 @@ const inviteDetectedText = document.getElementById('invite-detected-text');
 
 const btnLogout = document.getElementById('btn-logout');
 const btnInviteFamily = document.getElementById('btn-invite-family');
+const btnNotificationsToggle = document.getElementById('btn-notifications-toggle');
 const navItems = document.querySelectorAll('.nav-item');
 
 const modalContainer = document.getElementById('modal-container');
@@ -364,6 +365,303 @@ function openThemeModal() {
             closeModal();
         });
     });
+}
+
+// --- Push Notifications via Service Worker ---
+const PUSH_PREFS_KEY = 'tribuapp_push_prefs';
+
+function getPushPrefs() {
+    try {
+        const stored = localStorage.getItem(PUSH_PREFS_KEY);
+        if (stored) return JSON.parse(stored);
+    } catch {}
+    return {
+        enabled: true,
+        alertTasks: true,
+        alertMenu: true,
+        lastTaskAlertDate: '',
+        lastMenuAlertDate: ''
+    };
+}
+
+function savePushPrefs(prefs) {
+    try {
+        localStorage.setItem(PUSH_PREFS_KEY, JSON.stringify(prefs));
+    } catch {}
+}
+
+function isPushSupported() {
+    return 'Notification' in window && 'serviceWorker' in navigator;
+}
+
+function getPushPermissionStatus() {
+    if (!isPushSupported()) return 'unsupported';
+    return Notification.permission; // 'granted' | 'denied' | 'default'
+}
+
+async function requestPushPermission() {
+    if (!isPushSupported()) {
+        showToast('Este navegador no soporta notificaciones de Service Worker.');
+        return false;
+    }
+    try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+            const prefs = getPushPrefs();
+            prefs.enabled = true;
+            savePushPrefs(prefs);
+            showToast('✅ ¡Notificaciones activadas!');
+            await showServiceWorkerNotification('⛺ Tribuapp Familiar', {
+                body: '¡Notificaciones activadas! Te avisaremos de tareas pendientes y menús.',
+                data: { view: 'dashboard' }
+            });
+            return true;
+        } else if (permission === 'denied') {
+            showToast('⚠️ Las notificaciones están bloqueadas en tu navegador.');
+            return false;
+        }
+        return false;
+    } catch (err) {
+        console.warn('Error solicitando permisos de notificación:', err);
+        return false;
+    }
+}
+
+async function showServiceWorkerNotification(title, options = {}) {
+    if (!isPushSupported() || Notification.permission !== 'granted') return false;
+    const prefs = getPushPrefs();
+    if (!prefs.enabled) return false;
+
+    const fullOptions = {
+        icon: './icon-192.png',
+        badge: './icon-192.png',
+        vibrate: [100, 50, 100],
+        ...options
+    };
+
+    try {
+        if ('serviceWorker' in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            if (registration && registration.showNotification) {
+                await registration.showNotification(title, fullOptions);
+                return true;
+            }
+        }
+        if ('Notification' in window) {
+            new Notification(title, fullOptions);
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.warn('Error al mostrar notificación con Service Worker:', err);
+        return false;
+    }
+}
+
+async function triggerPendingTasksAlert(tasks, force = false) {
+    const prefs = getPushPrefs();
+    if (!prefs.enabled || !prefs.alertTasks) return;
+    if (Notification.permission !== 'granted') return;
+
+    const todayIso = getLocalDateInputValue();
+    if (!force && prefs.lastTaskAlertDate === todayIso) {
+        return; // Evita avisar repetidas veces en el mismo día de forma automática
+    }
+
+    const pendingToday = (tasks || []).filter(t => t.fecha_objetivo === todayIso && t.estado !== 'Completada');
+    if (!pendingToday.length) return;
+
+    const taskTitles = pendingToday.slice(0, 3).map(t => t.tareas_catalogo?.nombre || t.nombre || 'Tarea').join(', ');
+    const count = pendingToday.length;
+    const moreText = count > 3 ? ` y ${count - 3} más` : '';
+
+    await showServiceWorkerNotification(`📋 ${count} ${count === 1 ? 'tarea pendiente' : 'tareas pendientes'} para hoy`, {
+        body: `Tribu: ${taskTitles}${moreText}. ¡No lo olvides!`,
+        data: { view: 'tareas', url: './' },
+        tag: 'tribuapp-tasks-reminder'
+    });
+
+    prefs.lastTaskAlertDate = todayIso;
+    savePushPrefs(prefs);
+}
+
+async function triggerMenuAlert(dishName, dia = 'Hoy', force = false) {
+    const prefs = getPushPrefs();
+    if (!prefs.enabled || !prefs.alertMenu) return;
+    if (Notification.permission !== 'granted') return;
+
+    const todayIso = getLocalDateInputValue();
+    if (!force && prefs.lastMenuAlertDate === todayIso) {
+        return;
+    }
+
+    await showServiceWorkerNotification(`🍽️ Menú familiar (${dia})`, {
+        body: `Plato previsto: ${dishName}. ¡Buen provecho a la tribu!`,
+        data: { view: 'menus', url: './' },
+        tag: 'tribuapp-menu-reminder'
+    });
+
+    prefs.lastMenuAlertDate = todayIso;
+    savePushPrefs(prefs);
+}
+
+function openNotificationsModal() {
+    const status = getPushPermissionStatus();
+    const prefs = getPushPrefs();
+
+    let statusBadge = '';
+    let statusDesc = '';
+    if (status === 'granted') {
+        statusBadge = '<span class="notif-badge granted">Permitido</span>';
+        statusDesc = 'Las notificaciones push mediante Service Worker están activas en este dispositivo.';
+    } else if (status === 'denied') {
+        statusBadge = '<span class="notif-badge denied">Bloqueado</span>';
+        statusDesc = 'Están bloqueadas en la configuración de permisos de tu navegador. Actívalas en ajustes del sitio.';
+    } else if (status === 'default') {
+        statusBadge = '<span class="notif-badge default">Sin activar</span>';
+        statusDesc = 'Aún no has concedido permiso a la app para recibir alertas de tareas o menú.';
+    } else {
+        statusBadge = '<span class="notif-badge denied">No soportado</span>';
+        statusDesc = 'Este navegador no tiene soporte para notificaciones Service Worker.';
+    }
+
+    const html = `
+        <div class="modal-header">
+            <h3>🔔 Notificaciones Familiares</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Recibe alertas automáticas en tu móvil u ordenador cuando haya tareas pendientes del día o cambios en el menú familiar.
+        </p>
+
+        <div class="notification-status-box">
+            <span class="notification-status-icon">${status === 'granted' ? '🔔' : (status === 'denied' ? '🔕' : '⏳')}</span>
+            <div class="notification-status-info">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                    <strong>Estado en este dispositivo</strong>
+                    ${statusBadge}
+                </div>
+                <span>${statusDesc}</span>
+            </div>
+        </div>
+
+        ${status !== 'granted' && status !== 'unsupported' ? `
+            <button type="button" id="btn-request-notif-perm" class="btn-primary" style="margin-bottom: 16px;">
+                🔔 Permitir notificaciones en este móvil/equipo
+            </button>
+        ` : ''}
+
+        <div class="notif-pref-list">
+            <label class="notif-pref-item" for="chk-notif-enabled">
+                <div class="notif-pref-label">
+                    <strong>Activar notificaciones</strong>
+                    <span>Control general de alertas familiares en este dispositivo.</span>
+                </div>
+                <input type="checkbox" id="chk-notif-enabled" class="notif-checkbox" ${prefs.enabled && status === 'granted' ? 'checked' : ''} ${status !== 'granted' ? 'disabled' : ''}>
+            </label>
+
+            <label class="notif-pref-item" for="chk-notif-tasks">
+                <div class="notif-pref-label">
+                    <strong>Avisos de tareas pendientes de hoy</strong>
+                    <span>Alerta matinal si hay tareas asignadas para el día de hoy.</span>
+                </div>
+                <input type="checkbox" id="chk-notif-tasks" class="notif-checkbox" ${prefs.alertTasks ? 'checked' : ''} ${status !== 'granted' ? 'disabled' : ''}>
+            </label>
+
+            <label class="notif-pref-item" for="chk-notif-menu">
+                <div class="notif-pref-label">
+                    <strong>Avisos del menú semanal</strong>
+                    <span>Notificar cuando se diseñe el menú o toque la comida/cena de hoy.</span>
+                </div>
+                <input type="checkbox" id="chk-notif-menu" class="notif-checkbox" ${prefs.alertMenu ? 'checked' : ''} ${status !== 'granted' ? 'disabled' : ''}>
+            </label>
+        </div>
+
+        <div style="display: grid; gap: 8px;">
+            <button type="button" id="btn-test-push-notif" class="btn-secondary" style="width: 100%;">
+                ⚡ Lanzar notificación de prueba ahora
+            </button>
+            <button type="button" id="btn-trigger-today-tasks-notif" class="btn-secondary" style="width: 100%;">
+                📋 Probar aviso de tareas pendientes de hoy
+            </button>
+        </div>
+    `;
+
+    openModal(html);
+
+    document.getElementById('btn-request-notif-perm')?.addEventListener('click', async () => {
+        const ok = await requestPushPermission();
+        if (ok) {
+            closeModal();
+            setTimeout(openNotificationsModal, 300);
+        }
+    });
+
+    const chkEnabled = document.getElementById('chk-notif-enabled');
+    const chkTasks = document.getElementById('chk-notif-tasks');
+    const chkMenu = document.getElementById('chk-notif-menu');
+
+    const updateCheckboxes = () => {
+        const current = getPushPrefs();
+        if (chkEnabled) current.enabled = chkEnabled.checked;
+        if (chkTasks) current.alertTasks = chkTasks.checked;
+        if (chkMenu) current.alertMenu = chkMenu.checked;
+        savePushPrefs(current);
+    };
+
+    chkEnabled?.addEventListener('change', updateCheckboxes);
+    chkTasks?.addEventListener('change', updateCheckboxes);
+    chkMenu?.addEventListener('change', updateCheckboxes);
+
+    document.getElementById('btn-test-push-notif')?.addEventListener('click', async () => {
+        if (Notification.permission !== 'granted') {
+            const ok = await requestPushPermission();
+            if (!ok) return;
+        }
+        await showServiceWorkerNotification('🔔 ¡Prueba de Notificación Tribuapp!', {
+            body: 'El Service Worker está conectado y listo para alertar a tu familia.',
+            data: { view: 'dashboard' }
+        });
+        showToast('Notificación de prueba enviada');
+    });
+
+    document.getElementById('btn-trigger-today-tasks-notif')?.addEventListener('click', async () => {
+        if (Notification.permission !== 'granted') {
+            const ok = await requestPushPermission();
+            if (!ok) return;
+        }
+        try {
+            const { tasks } = await fetchFamilyData();
+            const todayIso = getLocalDateInputValue();
+            const pendingToday = (tasks || []).filter(t => t.fecha_objetivo === todayIso && t.estado !== 'Completada');
+            if (pendingToday.length > 0) {
+                await triggerPendingTasksAlert(tasks, true);
+                showToast('Aviso de tareas enviado');
+            } else {
+                await showServiceWorkerNotification('🎉 ¡Todo al día en la Tribu!', {
+                    body: 'No tienes tareas pendientes asignadas para el día de hoy.',
+                    data: { view: 'tareas' }
+                });
+                showToast('Sin tareas pendientes hoy');
+            }
+        } catch (e) {
+            showToast('No se pudieron consultar las tareas');
+        }
+    });
+}
+
+function initNotifications() {
+    btnNotificationsToggle?.addEventListener('click', openNotificationsModal);
+
+    // Escuchar mensajes provenientes del Service Worker (ej. clic en notificación que solicita cambiar de vista)
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'NAVIGATE_VIEW') {
+                const targetView = event.data.targetView || 'dashboard';
+                renderizarVista(targetView);
+            }
+        });
+    }
 }
 
 // --- Floating Action Button (FAB) ---
@@ -568,6 +866,14 @@ async function openQuickAddTaskModal() {
 
         showToast(`✅ Tarea "${nombre}" creada`);
         closeModal();
+
+        if (fecha === getLocalDateInputValue()) {
+            showServiceWorkerNotification('📋 Nueva tarea para hoy', {
+                body: `Se ha añadido "${nombre}" a la tribu para hoy.`,
+                data: { view: 'tareas', url: './' }
+            });
+        }
+
         if (currentView === 'dashboard' || currentView === 'tareas') {
             await renderizarVista(currentView);
         }
@@ -644,6 +950,14 @@ function openQuickAddMealModal() {
         saveAppState(state);
         showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
         closeModal();
+
+        if (dia === todayDayName) {
+            showServiceWorkerNotification(`🍽️ Plato para hoy (${tipo})`, {
+                body: `Se ha añadido "${nombre}" al menú familiar de hoy.`,
+                data: { view: 'menus', url: './' }
+            });
+        }
+
         if (currentView === 'dashboard' || currentView === 'menus') {
             renderizarVista(currentView);
         }
@@ -1585,6 +1899,16 @@ async function renderDashboard(renderId) {
             </div>
         </div>
 
+        ${getPushPermissionStatus() === 'default' ? `
+            <div class="notif-quick-banner" id="banner-enable-notif">
+                <div class="notif-quick-banner-content">
+                    <span style="font-size: 20px;">🔔</span>
+                    <span>Activa las notificaciones para que la tribu no olvide tareas ni comidas de hoy.</span>
+                </div>
+                <button type="button" class="btn-notif-quick" id="btn-activate-notifs-banner">Activar</button>
+            </div>
+        ` : ''}
+
         <div class="dashboard-grid">
             <article class="stat-card">
                 <span>Pendientes hoy</span>
@@ -1680,6 +2004,17 @@ async function renderDashboard(renderId) {
     document.getElementById('btn-dash-invite')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-dash-invite-2')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-quick-pantry-review')?.addEventListener('click', openPantryReviewModal);
+
+    document.getElementById('btn-activate-notifs-banner')?.addEventListener('click', async () => {
+        const ok = await requestPushPermission();
+        if (ok) {
+            await renderizarVista('dashboard');
+        }
+    });
+
+    if (getPushPermissionStatus() === 'granted') {
+        triggerPendingTasksAlert(tasks, false);
+    }
 
     mainContent.querySelectorAll('[data-complete-task-dash]').forEach((button) => {
         button.addEventListener('click', async () => {
@@ -1939,6 +2274,12 @@ async function cargarVistaTareas(renderId) {
         }
 
         showToast('Tarea creada y asignada');
+        if (fecha === getLocalDateInputValue()) {
+            showServiceWorkerNotification('📋 Nueva tarea para hoy', {
+                body: `Se ha asignado "${nombre}" para hoy.`,
+                data: { view: 'tareas', url: './' }
+            });
+        }
         await renderizarVista(currentView);
     });
 }
@@ -2221,6 +2562,11 @@ function openAIGeneratorModal() {
             closeModal();
             renderMenuView();
 
+            showServiceWorkerNotification('🍽️ ¡Nuevo menú semanal listo!', {
+                body: `Se ha planificado el menú de la tribu (${dieta}) con 12 platos equilibrados.`,
+                data: { view: 'menus', url: './' }
+            });
+
             setTimeout(() => {
                 openPantryReviewModal();
             }, 600);
@@ -2241,6 +2587,11 @@ function openAIGeneratorModal() {
             showToast('¡Menú semanal cargado con éxito!');
             closeModal();
             renderMenuView();
+
+            showServiceWorkerNotification('🍽️ Menú semanal planificado', {
+                body: `Se ha configurado el menú familiar (${dieta}) con recetas equilibradas.`,
+                data: { view: 'menus', url: './' }
+            });
 
             setTimeout(() => {
                 openPantryReviewModal();
@@ -2836,15 +3187,23 @@ supabase.auth.onAuthStateChange((event, session) => {
     }
 });
 
-// PWA Service Worker Registration
+// PWA Service Worker Registration & Notification Navigation
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch((err) => {
+        navigator.serviceWorker.register('./sw.js').catch((err) => {
             console.warn('Service worker registration failed:', err);
         });
+    });
+
+    navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'NAVIGATE_VIEW') {
+            const targetView = event.data.targetView || 'dashboard';
+            renderizarVista(targetView);
+        }
     });
 }
 
 initTheme();
+initNotifications();
 initFab();
 checkSession();
