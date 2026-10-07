@@ -1186,7 +1186,12 @@ function resetStandardAuthUI() {
         if (authMemberNameInput) authMemberNameInput.required = false;
     }
     btnSubmit.style.background = '';
-    btnDemoLogin?.classList.remove('hidden');
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === '1' || urlParams.get('test') === '1') {
+        btnDemoLogin?.classList.remove('hidden');
+    } else {
+        btnDemoLogin?.classList.add('hidden');
+    }
     btnResetPassword?.classList.remove('hidden');
     updateAuthMode(authMode === 'signup' ? 'signup' : 'login');
 }
@@ -1266,6 +1271,11 @@ btnAuthMode.addEventListener('click', () => {
 });
 
 if (btnDemoLogin) {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('demo') === '1' || urlParams.get('test') === '1') {
+        btnDemoLogin.classList.remove('hidden');
+    }
+
     btnDemoLogin.addEventListener('click', () => {
         if (authMode !== 'login') updateAuthMode('login');
         emailInput.value = 'demo@tribuapp.com';
