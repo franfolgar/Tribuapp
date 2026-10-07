@@ -220,6 +220,18 @@ const btnDemoLogin = document.getElementById('btn-demo-login');
 const authMessage = document.getElementById('auth-message');
 const passwordUpdateForm = document.getElementById('password-update-form');
 const passwordUpdateError = document.getElementById('password-update-error');
+const passwordRecoveryRequestForm = document.getElementById('password-recovery-request-form');
+const recoveryEmailInput = document.getElementById('recovery-email');
+const btnSendRecovery = document.getElementById('btn-send-recovery');
+const btnCancelRecovery = document.getElementById('btn-cancel-recovery');
+const recoveryRequestError = document.getElementById('recovery-request-error');
+const recoveryRequestSuccess = document.getElementById('recovery-request-success');
+const btnCancelUpdatePassword = document.getElementById('btn-cancel-update-password');
+const recoveryPastedUrl = document.getElementById('recovery-pasted-url');
+const btnActivatePastedRecovery = document.getElementById('btn-activate-pasted-recovery');
+const recoveryPastedError = document.getElementById('recovery-pasted-error');
+const supabaseAppUrlPreview = document.getElementById('supabase-app-url-preview');
+const btnCopyAppUrl = document.getElementById('btn-copy-app-url');
 
 const onboardingForm = document.getElementById('onboarding-form');
 const btnOnboarding = document.getElementById('btn-onboarding');
@@ -1179,7 +1191,81 @@ function setupInviteAuthUI(pendingInvite) {
     authMessage?.classList.add('hidden');
 }
 
+let isPasswordRecovery = false;
+
+function detectPasswordRecoveryState() {
+    const initialHash = window.__INITIAL_HASH__ || '';
+    const initialSearch = window.__INITIAL_SEARCH__ || '';
+    const hash = window.location.hash || initialHash;
+    const search = window.location.search || initialSearch;
+
+    // 1. Detectar si la URL trae un error de Supabase (enlace caducado, inválido, etc.)
+    let errorDescription = '';
+    if (hash.includes('error=')) {
+        const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+        errorDescription = hashParams.get('error_description') || hashParams.get('error');
+    } else if (search.includes('error=')) {
+        const searchParams = new URLSearchParams(search.replace(/^\?/, ''));
+        errorDescription = searchParams.get('error_description') || searchParams.get('error');
+    }
+
+    if (errorDescription) {
+        let msg = decodeURIComponent(errorDescription.replace(/\+/g, ' '));
+        if (/expired|invalid|token|otp/i.test(msg)) {
+            msg = 'El enlace de recuperación ha caducado o ya ha sido utilizado. Solicita un nuevo enlace abajo.';
+        }
+        showAuthError(`⚠️ ${msg}`);
+        try {
+            history.replaceState(null, '', window.location.pathname + window.location.search.replace(/[?&]error[^&]*/g, ''));
+        } catch {}
+        return false;
+    }
+
+    // 2. Comprobar si es un flujo de recuperación de contraseña (type=recovery o contiene tokens)
+    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
+        isPasswordRecovery = true;
+        return true;
+    }
+    if (hash.includes('access_token=') && (hash.includes('refresh_token=') || hash.includes('token_type='))) {
+        isPasswordRecovery = true;
+        return true;
+    }
+
+    return false;
+}
+
+function showPasswordUpdateForm(user = null) {
+    isPasswordRecovery = true;
+    if (user) setCurrentUser(user);
+
+    authView.classList.remove('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.add('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+
+    authForm.classList.add('hidden');
+    passwordRecoveryRequestForm?.classList.add('hidden');
+    document.querySelector('.auth-actions')?.classList.add('hidden');
+    authError.classList.add('hidden');
+    authMessage.classList.add('hidden');
+
+    passwordUpdateForm.classList.remove('hidden');
+    passwordUpdateError.classList.add('hidden');
+    const newPassInput = document.getElementById('new-password');
+    if (newPassInput) {
+        newPassInput.value = '';
+        setTimeout(() => newPassInput.focus(), 100);
+    }
+    const confirmPassInput = document.getElementById('confirm-password');
+    if (confirmPassInput) confirmPassInput.value = '';
+}
+
 function resetStandardAuthUI() {
+    passwordRecoveryRequestForm?.classList.add('hidden');
+    passwordUpdateForm?.classList.add('hidden');
+    authForm?.classList.remove('hidden');
+    document.querySelector('.auth-actions')?.classList.remove('hidden');
+
     if (inviteWelcomeBanner) inviteWelcomeBanner.classList.add('hidden');
     if (authNameGroup) {
         authNameGroup.classList.add('hidden');
@@ -1211,10 +1297,54 @@ function getFriendlyUserName() {
 }
 
 async function checkSession() {
+    const isRecoveryUrl = detectPasswordRecoveryState();
+
     try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        let { data: { session }, error } = await supabase.auth.getSession();
+
+        // Si tenemos tokens en la URL pero getSession aún no los tiene (por ejemplo, al pegar URL o volver de redirect)
+        if (!session && isRecoveryUrl) {
+            const rawHash = (window.__INITIAL_HASH__ || window.location.hash || '').replace(/^#/, '');
+            const rawSearch = (window.__INITIAL_SEARCH__ || window.location.search || '').replace(/^\?/, '');
+            const hashParams = new URLSearchParams(rawHash);
+            const searchParams = new URLSearchParams(rawSearch);
+            const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
+            const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
+            const code = searchParams.get('code') || hashParams.get('code');
+
+            if (accessToken) {
+                try {
+                    const setRes = await supabase.auth.setSession({
+                        access_token: accessToken,
+                        refresh_token: refreshToken || ''
+                    });
+                    if (setRes.data?.session) {
+                        session = setRes.data.session;
+                    }
+                } catch (e) {
+                    console.warn('Error al activar sesión desde URL hash:', e);
+                }
+            } else if (code) {
+                try {
+                    const codeRes = await supabase.auth.exchangeCodeForSession(code);
+                    if (codeRes.data?.session) {
+                        session = codeRes.data.session;
+                    }
+                } catch (e) {
+                    console.warn('Error al canjear código PKCE desde URL:', e);
+                }
+            }
+        }
+
         if (error) {
             showAuthError(`No se pudo comprobar la sesión: ${error.message}`);
+            return;
+        }
+
+        // Si la URL es de recuperación o venimos de un evento de contraseña, no saltar al dashboard
+        if (isRecoveryUrl || isPasswordRecovery) {
+            setCurrentUser(session?.user || null);
+            showPasswordUpdateForm(session?.user || null);
             return;
         }
 
@@ -1288,24 +1418,285 @@ if (btnDemoLogin) {
     });
 }
 
-btnResetPassword.addEventListener('click', async () => {
-    const email = emailInput.value.trim().toLowerCase();
+// --- Manejo del flujo "He olvidado mi contraseña" y actualización de clave ---
+
+btnResetPassword?.addEventListener('click', () => {
+    authForm.classList.add('hidden');
+    document.querySelector('.auth-actions')?.classList.add('hidden');
+    authError.classList.add('hidden');
+    authMessage.classList.add('hidden');
+
+    if (recoveryEmailInput) {
+        recoveryEmailInput.value = emailInput?.value ? emailInput.value.trim() : '';
+    }
+    recoveryRequestError?.classList.add('hidden');
+    recoveryRequestSuccess?.classList.add('hidden');
+    if (btnSendRecovery) {
+        btnSendRecovery.classList.remove('hidden');
+        btnSendRecovery.disabled = false;
+        btnSendRecovery.innerText = 'Enviar enlace de recuperación';
+    }
+
+    passwordRecoveryRequestForm?.classList.remove('hidden');
+    setTimeout(() => recoveryEmailInput?.focus(), 80);
+});
+
+btnCancelRecovery?.addEventListener('click', () => {
+    passwordRecoveryRequestForm?.classList.add('hidden');
+    authForm.classList.remove('hidden');
+    document.querySelector('.auth-actions')?.classList.remove('hidden');
+    authError.classList.add('hidden');
+    authMessage.classList.add('hidden');
+});
+
+passwordRecoveryRequestForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = recoveryEmailInput?.value?.trim().toLowerCase();
     if (!email) {
-        showAuthError('Escribe tu correo electrónico y vuelve a pulsar “He olvidado mi contraseña”.');
-        emailInput.focus();
+        if (recoveryRequestError) {
+            recoveryRequestError.innerText = 'Por favor, escribe tu correo electrónico.';
+            recoveryRequestError.classList.remove('hidden');
+        }
         return;
     }
 
-    btnResetPassword.disabled = true;
-    try {
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
-        if (error) throw error;
-        showAuthMessage('Si existe una cuenta con ese correo, recibirás un enlace para restablecer la contraseña.');
-    } catch (error) {
-        showAuthError(`No se pudo solicitar el restablecimiento: ${error.message}`);
-    } finally {
-        btnResetPassword.disabled = false;
+    if (btnSendRecovery) {
+        btnSendRecovery.disabled = true;
+        btnSendRecovery.innerText = 'Enviando...';
     }
+    recoveryRequestError?.classList.add('hidden');
+    recoveryRequestSuccess?.classList.add('hidden');
+
+    // Construir la URL limpia a la que debe volver el usuario al pulsar el enlace del correo
+    let redirectUrl = window.location.origin;
+    if (window.location.pathname && window.location.pathname !== '/' && !window.location.pathname.endsWith('.html')) {
+        redirectUrl += window.location.pathname.replace(/\/$/, '');
+    } else if (window.location.pathname) {
+        redirectUrl += window.location.pathname;
+    }
+
+    try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: redirectUrl
+        });
+
+        if (error) throw error;
+
+        if (recoveryRequestSuccess) {
+            recoveryRequestSuccess.innerHTML = `
+                <div>
+                    <strong>✉️ ¡Enlace de recuperación enviado!</strong><br>
+                    Hemos enviado un enlace seguro a <strong>${escapeHtml(email)}</strong>.<br>
+                    <div style="margin-top: 8px; font-size: 12px; line-height: 1.45; background: rgba(79, 70, 229, 0.08); padding: 8px 10px; border-radius: 8px;">
+                        💡 <strong>¿El enlace te abre localhost:3000?</strong><br>
+                        ¡No te preocupes! Copia esa dirección de la barra de tu navegador (o el enlace del correo) y pégala en el recuadro inferior para activar tu nueva contraseña al instante.
+                    </div>
+                </div>
+            `;
+            recoveryRequestSuccess.classList.remove('hidden');
+        }
+        if (btnSendRecovery) {
+            btnSendRecovery.classList.add('hidden');
+        }
+    } catch (error) {
+        console.warn('Error en resetPasswordForEmail:', error);
+        let msg = error.message;
+        if (error.status === 429 || error.code === 429 || msg?.includes('rate limit') || msg?.includes('security purposes')) {
+            msg = 'Por motivos de seguridad, debes esperar aproximadamente un minuto antes de solicitar otro correo de recuperación.';
+        } else if (msg?.includes('fetch') || msg?.includes('network')) {
+            msg = 'Error de conexión. Comprueba tu conexión a internet.';
+        }
+        if (recoveryRequestError) {
+            recoveryRequestError.innerText = `No se pudo enviar el correo: ${msg}`;
+            recoveryRequestError.classList.remove('hidden');
+        }
+        if (btnSendRecovery) {
+            btnSendRecovery.disabled = false;
+            btnSendRecovery.innerText = 'Enviar enlace de recuperación';
+        }
+    }
+});
+
+async function processRecoveryInput(rawInput) {
+    let cleanInput = (rawInput || '').trim().replace(/^["']|["']$/g, '');
+    if (!cleanInput) {
+        throw new Error('Por favor, introduce la dirección o el enlace de recuperación.');
+    }
+
+    let hashPart = '';
+    let searchPart = '';
+
+    if (cleanInput.includes('#')) {
+        const splitHash = cleanInput.split('#');
+        hashPart = splitHash[1];
+        if (splitHash[0].includes('?')) {
+            searchPart = splitHash[0].split('?')[1];
+        }
+    } else if (cleanInput.includes('?')) {
+        searchPart = cleanInput.split('?')[1];
+    } else {
+        if (cleanInput.includes('access_token=')) {
+            hashPart = cleanInput;
+        } else {
+            searchPart = cleanInput;
+        }
+    }
+
+    const hashParams = new URLSearchParams(hashPart);
+    const searchParams = new URLSearchParams(searchPart);
+
+    // Caso 1: access_token y refresh_token (dirección localhost:3000/#access_token=...)
+    const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
+
+    if (accessToken) {
+        const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken || ''
+        });
+        if (error) throw error;
+
+        isPasswordRecovery = true;
+        setCurrentUser(data.user || null);
+        showPasswordUpdateForm(data.user || null);
+        showToast('🔑 ¡Enlace validado con éxito! Elige tu nueva contraseña.');
+        return;
+    }
+
+    // Caso 2: código PKCE (?code=...)
+    const code = searchParams.get('code') || hashParams.get('code');
+    if (code) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) throw error;
+
+        isPasswordRecovery = true;
+        setCurrentUser(data.user || null);
+        showPasswordUpdateForm(data.user || null);
+        showToast('🔑 ¡Código canjeado con éxito! Elige tu nueva contraseña.');
+        return;
+    }
+
+    // Caso 3: enlace de confirmación original de Supabase (/auth/v1/verify?token=...&type=recovery)
+    const token = searchParams.get('token') || hashParams.get('token') || searchParams.get('token_hash') || hashParams.get('token_hash');
+    const emailParam = searchParams.get('email') || recoveryEmailInput?.value?.trim() || '';
+
+    if (token) {
+        try {
+            const { data, error } = await supabase.auth.verifyOtp({
+                token_hash: token,
+                type: 'recovery'
+            });
+            if (!error && (data?.session || data?.user)) {
+                isPasswordRecovery = true;
+                setCurrentUser(data.user || null);
+                showPasswordUpdateForm(data.user || null);
+                showToast('🔑 ¡Enlace validado con éxito! Elige tu nueva contraseña.');
+                return;
+            }
+        } catch (otpErr) {
+            console.log('Intento con token_hash falló, probando con email:', otpErr);
+        }
+
+        if (emailParam) {
+            const { data, error } = await supabase.auth.verifyOtp({
+                email: emailParam,
+                token: token,
+                type: 'recovery'
+            });
+            if (error) throw error;
+
+            isPasswordRecovery = true;
+            setCurrentUser(data.user || null);
+            showPasswordUpdateForm(data.user || null);
+            showToast('🔑 ¡Enlace validado con éxito! Elige tu nueva contraseña.');
+            return;
+        }
+
+        throw new Error('Escribe tu correo arriba o pega la dirección completa que abrió tu navegador (localhost:3000/#...).');
+    }
+
+    // Caso 4: token suelto
+    const cleanToken = cleanInput.replace(/\s+/g, '');
+    if (/^[0-9a-zA-Z_-]{6,}$/.test(cleanToken)) {
+        const email = recoveryEmailInput?.value?.trim() || '';
+        if (!email) {
+            throw new Error('Escribe tu correo arriba para verificar este código.');
+        }
+        const { data, error } = await supabase.auth.verifyOtp({
+            email,
+            token: cleanToken,
+            type: 'recovery'
+        });
+        if (error) throw error;
+
+        isPasswordRecovery = true;
+        setCurrentUser(data.user || null);
+        showPasswordUpdateForm(data.user || null);
+        showToast('🔑 ¡Código validado! Elige tu nueva contraseña.');
+        return;
+    }
+
+    throw new Error('No se detectó un enlace o token válido. Copia la dirección completa de la barra del navegador donde pone localhost:3000');
+}
+
+if (supabaseAppUrlPreview) {
+    supabaseAppUrlPreview.value = window.location.origin;
+}
+
+btnCopyAppUrl?.addEventListener('click', async () => {
+    const url = window.location.origin;
+    try {
+        await navigator.clipboard.writeText(url);
+        btnCopyAppUrl.innerText = '¡Copiado!';
+        setTimeout(() => { if (btnCopyAppUrl) btnCopyAppUrl.innerText = 'Copiar'; }, 2000);
+    } catch {
+        supabaseAppUrlPreview?.select();
+        document.execCommand('copy');
+        btnCopyAppUrl.innerText = '¡Copiado!';
+        setTimeout(() => { if (btnCopyAppUrl) btnCopyAppUrl.innerText = 'Copiar'; }, 2000);
+    }
+});
+
+btnActivatePastedRecovery?.addEventListener('click', async () => {
+    const rawInput = recoveryPastedUrl?.value?.trim();
+    if (!rawInput) {
+        if (recoveryPastedError) {
+            recoveryPastedError.innerText = 'Por favor, pega la dirección de localhost:3000 o el enlace del correo.';
+            recoveryPastedError.classList.remove('hidden');
+        }
+        return;
+    }
+
+    recoveryPastedError?.classList.add('hidden');
+    btnActivatePastedRecovery.disabled = true;
+    btnActivatePastedRecovery.innerText = 'Verificando enlace...';
+
+    try {
+        await processRecoveryInput(rawInput);
+    } catch (err) {
+        console.warn('Error al activar enlace de recuperación:', err);
+        if (recoveryPastedError) {
+            recoveryPastedError.innerText = `No se pudo activar: ${err.message || 'Verifica que hayas copiado la dirección completa.'}`;
+            recoveryPastedError.classList.remove('hidden');
+        }
+    } finally {
+        btnActivatePastedRecovery.disabled = false;
+        btnActivatePastedRecovery.innerText = '🚀 Activar y cambiar contraseña';
+    }
+});
+
+btnCancelUpdatePassword?.addEventListener('click', async () => {
+    isPasswordRecovery = false;
+    try {
+        await supabase.auth.signOut();
+    } catch {}
+    try {
+        history.replaceState(null, '', window.location.pathname);
+    } catch {}
+    passwordUpdateForm?.classList.add('hidden');
+    authForm?.classList.remove('hidden');
+    document.querySelector('.auth-actions')?.classList.remove('hidden');
+    resetStandardAuthUI();
 });
 
 passwordUpdateForm.addEventListener('submit', async (event) => {
@@ -1313,34 +1704,57 @@ passwordUpdateForm.addEventListener('submit', async (event) => {
     passwordUpdateError.classList.add('hidden');
     const password = document.getElementById('new-password').value;
     const confirmation = document.getElementById('confirm-password').value;
-    if (password !== confirmation) {
-        passwordUpdateError.innerText = 'Las contraseñas no coinciden.';
+
+    if (!password || password.length < 6) {
+        passwordUpdateError.innerText = 'La contraseña debe tener un mínimo de 6 caracteres.';
         passwordUpdateError.classList.remove('hidden');
         return;
     }
 
-    const submitButton = passwordUpdateForm.querySelector('button[type="submit"]');
+    if (password !== confirmation) {
+        passwordUpdateError.innerText = 'Las contraseñas no coinciden. Escríbelas iguales.';
+        passwordUpdateError.classList.remove('hidden');
+        return;
+    }
+
+    const submitButton = document.getElementById('btn-submit-new-password') || passwordUpdateForm.querySelector('button[type="submit"]');
     submitButton.disabled = true;
-    submitButton.innerText = 'Actualizando...';
+    submitButton.innerText = 'Guardando nueva contraseña...';
+
     try {
         const { data, error } = await supabase.auth.updateUser({ password });
         if (error) throw error;
+
+        isPasswordRecovery = false;
+
+        // Limpiar el hash de la barra de direcciones para no volver a entrar en modo recuperación
+        try {
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+        } catch {}
+
         passwordUpdateForm.reset();
         passwordUpdateForm.classList.add('hidden');
-        authForm.classList.remove('hidden');
-        document.querySelector('.auth-actions').classList.remove('hidden');
+        showToast('✅ ¡Contraseña actualizada con éxito!');
+
         if (data.user) {
             setCurrentUser(data.user);
             await mostrarApp();
         } else {
-            showAuthMessage('Contraseña actualizada. Ya puedes iniciar sesión.');
+            resetStandardAuthUI();
+            showAuthMessage('✅ Tu contraseña ha sido cambiada. Ya puedes iniciar sesión.');
         }
     } catch (error) {
-        passwordUpdateError.innerText = `No se pudo actualizar la contraseña: ${error.message}`;
+        let msg = error.message;
+        if (msg.includes('same_password')) {
+            msg = 'La nueva contraseña no puede ser idéntica a la anterior.';
+        } else if (msg.includes('expired') || msg.includes('reauthenticate')) {
+            msg = 'La sesión de recuperación ha caducado. Vuelve a solicitar un enlace de recuperación.';
+        }
+        passwordUpdateError.innerText = `No se pudo actualizar la contraseña: ${msg}`;
         passwordUpdateError.classList.remove('hidden');
     } finally {
         submitButton.disabled = false;
-        submitButton.innerText = 'Actualizar contraseña';
+        submitButton.innerText = 'Guardar nueva contraseña';
     }
 });
 
@@ -1468,6 +1882,11 @@ btnLogout.addEventListener('click', async () => {
 });
 
 async function mostrarApp() {
+    if (isPasswordRecovery) {
+        showPasswordUpdateForm(currentUser);
+        return;
+    }
+
     authView.classList.add('hidden');
 
     const pendingInvite = getPendingInvite();
@@ -3320,24 +3739,19 @@ function validateBackup(backup) {
 
 supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
-        setCurrentUser(session?.user || null);
-        authView.classList.remove('hidden');
-        onboardingView.classList.add('hidden');
-        appView.classList.add('hidden');
-        authForm.classList.add('hidden');
-        document.querySelector('.auth-actions').classList.add('hidden');
-        passwordUpdateForm.classList.remove('hidden');
-        passwordUpdateError.classList.add('hidden');
+        showPasswordUpdateForm(session?.user || null);
         return;
     }
 
     if (event === 'SIGNED_OUT') {
+        isPasswordRecovery = false;
         setCurrentUser(null);
         currentProfile = null;
         authView.classList.remove('hidden');
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
         if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+        resetStandardAuthUI();
     }
 });
 

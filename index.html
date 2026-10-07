@@ -14,6 +14,11 @@
     <meta name="apple-mobile-web-app-title" content="Tribuapp">
     <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="stylesheet" href="style.css">
+    <script>
+        window.__INITIAL_URL__ = window.location.href;
+        window.__INITIAL_HASH__ = window.location.hash;
+        window.__INITIAL_SEARCH__ = window.location.search;
+    </script>
 </head>
 <body>
 
@@ -46,14 +51,66 @@
                 <button type="button" id="btn-auth-mode" class="text-button">¿No tienes cuenta? Regístrate</button>
                 <button type="button" id="btn-reset-password" class="text-button">He olvidado mi contraseña</button>
             </div>
+
+            <!-- Formulario para solicitar enlace de recuperación -->
+            <form id="password-recovery-request-form" class="hidden">
+                <h2>🔑 Recuperar Contraseña</h2>
+                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                    Introduce tu correo electrónico y te enviaremos un enlace seguro para crear una nueva contraseña.
+                </p>
+                <label for="recovery-email">Correo electrónico</label>
+                <input type="email" id="recovery-email" placeholder="nombre@ejemplo.com" autocomplete="email" required>
+                <button type="submit" id="btn-send-recovery" class="btn-primary">Enviar enlace de recuperación</button>
+                <button type="button" id="btn-cancel-recovery" class="btn-secondary" style="margin-top: 10px; width: 100%;">Volver al inicio de sesión</button>
+                <p id="recovery-request-error" class="error-text hidden" role="alert" style="margin-top: 12px;"></p>
+                <div id="recovery-request-success" class="alert-banner hidden" role="status" style="margin-top: 12px; text-align: left;"></div>
+
+                <!-- Ayuda y activador si el correo manda a localhost:3000 -->
+                <div id="recovery-localhost-helper" style="margin-top: 20px; padding: 14px; background: rgba(79, 70, 229, 0.06); border: 1px solid rgba(79, 70, 229, 0.2); border-radius: 12px; text-align: left;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: var(--primary);">
+                        <span>💡</span>
+                        <span>¿El correo te mandó a localhost:3000?</span>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-muted); margin: 6px 0 10px 0; line-height: 1.45;">
+                        Si la página del correo no carga y arriba pone <code>localhost:3000/...</code>, <strong>copia esa dirección completa</strong> (o el enlace del correo) y pégala aquí para activar tu nueva contraseña:
+                    </p>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <input type="text" id="recovery-pasted-url" placeholder="Pega aquí la dirección de localhost:3000 o enlace..." style="font-size: 12px; padding: 10px; width: 100%;">
+                        <button type="button" id="btn-activate-pasted-recovery" class="btn-primary" style="font-size: 13px; padding: 10px;">
+                            🚀 Activar y cambiar contraseña
+                        </button>
+                        <p id="recovery-pasted-error" class="error-text hidden" style="margin-top: 4px; font-size: 12px;"></p>
+                    </div>
+                    
+                    <details style="margin-top: 12px; font-size: 11px; color: var(--text-muted); cursor: pointer;">
+                        <summary style="font-weight: 600; color: var(--primary);">⚙️ ¿Cómo configurarlo en Supabase para futuros correos?</summary>
+                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(79, 70, 229, 0.2); line-height: 1.5;">
+                            Por defecto, Supabase tiene configurado <code>localhost:3000</code> como Site URL.<br>
+                            1. Abre tu panel de <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline;">Supabase</a> &gt; <strong>Authentication</strong> &gt; <strong>URL Configuration</strong>.<br>
+                            2. En <strong>Site URL</strong> pon la dirección de tu aplicación:<br>
+                            <div style="display: flex; gap: 6px; margin: 6px 0;">
+                                <input type="text" id="supabase-app-url-preview" readonly style="font-size: 11px; padding: 6px 8px; flex: 1; background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-main);" value="">
+                                <button type="button" id="btn-copy-app-url" class="btn-secondary" style="font-size: 11px; padding: 6px 10px; white-space: nowrap;">Copiar</button>
+                            </div>
+                            3. En <strong>Redirect URLs</strong> añade también esa dirección seguida de <code>/**</code>. ¡Y ya funcionará el enlace directo en todos los correos!
+                        </div>
+                    </details>
+                </div>
+            </form>
+
+            <!-- Formulario para elegir nueva contraseña al volver del enlace de correo -->
             <form id="password-update-form" class="hidden">
-                <h2>Elige una contraseña nueva</h2>
-                <label for="new-password">Nueva contraseña</label>
-                <input type="password" id="new-password" autocomplete="new-password" minlength="6" required>
-                <label for="confirm-password">Repite la contraseña</label>
-                <input type="password" id="confirm-password" autocomplete="new-password" minlength="6" required>
-                <button type="submit" class="btn-primary">Actualizar contraseña</button>
-                <p id="password-update-error" class="error-text hidden" role="alert"></p>
+                <h2>🔑 Elige una contraseña nueva</h2>
+                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                    Introduce tu nueva clave de acceso para acceder a tu tribu.
+                </p>
+                <label for="new-password">Nueva contraseña (mínimo 6 caracteres)</label>
+                <input type="password" id="new-password" placeholder="••••••••" autocomplete="new-password" minlength="6" required>
+                <label for="confirm-password">Repite la nueva contraseña</label>
+                <input type="password" id="confirm-password" placeholder="••••••••" autocomplete="new-password" minlength="6" required>
+                <button type="submit" id="btn-submit-new-password" class="btn-primary">Guardar nueva contraseña</button>
+                <button type="button" id="btn-cancel-update-password" class="btn-secondary" style="margin-top: 10px; width: 100%;">Cancelar y volver</button>
+                <p id="password-update-error" class="error-text hidden" role="alert" style="margin-top: 12px;"></p>
             </form>
         </div>
     </div>
