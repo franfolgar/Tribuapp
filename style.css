@@ -1878,6 +1878,283 @@ input:focus,
     opacity: 0.9;
 }
 
+/* ==========================================================================
+   MODO SUPERMERCADO (SUPERMARKET MODE)
+   ========================================================================== */
+.supermarket-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--bg-color);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.supermarket-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    padding: 14px 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.supermarket-header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.supermarket-title-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.supermarket-title-box h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-main);
+}
+
+.supermarket-wakelock-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+}
+
+.btn-exit-supermarket {
+    padding: 8px 14px;
+    background: var(--card-secondary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.btn-exit-supermarket:hover {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger);
+}
+
+.supermarket-progress-box {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.supermarket-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.supermarket-body {
+    flex: 1;
+    padding: 16px;
+    max-width: 680px;
+    width: 100%;
+    margin: 0 auto;
+    padding-bottom: 90px;
+}
+
+.supermarket-aisle-block {
+    margin-bottom: 20px;
+}
+
+.supermarket-aisle-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 6px 4px;
+    margin-bottom: 8px;
+    border-bottom: 1px dashed var(--border-color);
+}
+
+.supermarket-item-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    min-height: 58px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.12s ease, opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+}
+
+.supermarket-item-card:active {
+    transform: scale(0.98);
+}
+
+.supermarket-checkbox {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    border: 2px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 16px;
+    font-weight: 800;
+    color: transparent;
+    transition: all 0.15s ease;
+}
+
+.supermarket-item-card.done {
+    background: var(--card-secondary-bg);
+    border-color: rgba(16, 185, 129, 0.2);
+    opacity: 0.65;
+}
+
+.supermarket-item-card.done .supermarket-checkbox {
+    background: var(--success);
+    border-color: var(--success);
+    color: white;
+}
+
+.supermarket-item-name {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-main);
+    word-break: break-word;
+}
+
+.supermarket-item-card.done .supermarket-item-name {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+.supermarket-empty-state {
+    text-align: center;
+    padding: 50px 20px;
+}
+
+.supermarket-empty-state h4 {
+    margin: 12px 0 6px;
+    font-size: 18px;
+}
+
+.supermarket-completed-section {
+    margin-top: 24px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 14px;
+}
+
+/* ==========================================================================
+   COCINAR CON LO QUE TENGO (FRIDGE RECIPES)
+   ========================================================================== */
+.fridge-chips-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.fridge-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--card-secondary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.fridge-chip:hover {
+    border-color: var(--primary);
+}
+
+.fridge-chip.selected {
+    background: rgba(79, 70, 229, 0.15);
+    color: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px var(--primary);
+}
+
+.fridge-recipes-results {
+    display: grid;
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.fridge-recipe-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.fridge-recipe-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.fridge-recipe-header h4 {
+    margin: 0;
+    font-size: 16px;
+    color: var(--text-main);
+    font-weight: 700;
+}
+
+.fridge-recipe-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.45;
+}
+
+.fridge-steps-list {
+    margin: 10px 0 16px;
+    padding-left: 20px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-main);
+}
+
+.fridge-steps-list li {
+    margin-bottom: 6px;
+}
+
+
 
 
 

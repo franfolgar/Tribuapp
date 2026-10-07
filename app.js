@@ -1598,17 +1598,35 @@ async function handleJoinTribu(codigoOId, memberName) {
         throw new Error('No se encontró ninguna tribu con ese código. Comprueba que el enlace sea el correcto.');
     }
 
-    // Guardar o actualizar usuario en la tabla usuarios vinculándolo a la familia
-    const { data: profile, error: profileError } = await supabase
+    // Guardar o actualizar usuario en la tabla usuarios vinculándolo a la familia ('Usuario' o 'Admin' según usuarios_rol_check)
+    let { data: profile, error: profileError } = await supabase
         .from('usuarios')
         .upsert({
             id: currentUser.id,
             familia_id: family.id,
             nombre: memberName || getFriendlyUserName(),
-            rol: 'Miembro',
+            rol: 'Usuario',
         })
         .select('id, familia_id, nombre, rol')
         .single();
+
+    if (profileError && profileError.message && profileError.message.includes('usuarios_rol_check')) {
+        const retry = await supabase
+            .from('usuarios')
+            .upsert({
+                id: currentUser.id,
+                familia_id: family.id,
+                nombre: memberName || getFriendlyUserName(),
+                rol: 'Admin',
+            })
+            .select('id, familia_id, nombre, rol')
+            .single();
+
+        if (!retry.error) {
+            profile = retry.data;
+            profileError = null;
+        }
+    }
 
     if (profileError) throw profileError;
 

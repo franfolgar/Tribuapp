@@ -259,6 +259,104 @@ Para cada plato proporciona:
   }
 });
 
+// Helper for fridge fallback recipes
+function getFallbackFridgeRecipes(ingList = []) {
+  const items = Array.isArray(ingList) && ingList.length ? ingList : ['Huevos', 'Patatas', 'Verduras'];
+  const mainIng = items.slice(0, 3).join(' y ');
+  return [
+    {
+      nombre: `Salteado rápido de ${mainIng}`,
+      tiempo: '18 min',
+      descripcion: 'Un plato express muy sabroso aprovechando lo que tienes a fuego vivo en sartén.',
+      ingredientes_usados: items.slice(0, 4),
+      ingredientes_extra: ['Aceite de oliva virgen extra', 'Sal y pimienta', '1 diente de ajo'],
+      pasos: [
+        'Pica los ingredientes en trozos medianos y dora el ajo en una sartén con un chorro de aceite.',
+        'Añade primero los ingredientes más duros y saltea a fuego medio-alto durante 8-10 minutos.',
+        'Incorpora el resto de ingredientes, salpimienta y saltea 4 minutos más hasta que todo esté tierno y dorado.'
+      ]
+    },
+    {
+      nombre: `Revuelto cremoso con ${items[0] || 'ingredientes del día'}`,
+      tiempo: '15 min',
+      descripcion: 'Cena reconfortante y rápida, ideal para aprovechar restos de la nevera con resultado jugoso.',
+      ingredientes_usados: items.slice(0, 3),
+      ingredientes_extra: ['2 huevos frescos', 'Aceite de oliva', 'Pizca de sal'],
+      pasos: [
+        'Saltea los ingredientes elegidos en una sartén con una cucharada de aceite hasta que tomen color.',
+        'Bate ligeramente los huevos con sal e incorpóralos a la sartén bajando el fuego.',
+        'Remueve suavemente durante 2 minutos hasta conseguir una textura cremosa y retira del fuego.'
+      ]
+    }
+  ];
+}
+
+// Endpoint to generate recipes from fridge leftovers using Gemini API
+app.post('/api/gemini/fridge-recipes', async (req, res) => {
+  try {
+    const { ingredientes = [], tiempo = '25 min' } = req.body || {};
+    const ingText = Array.isArray(ingredientes) ? ingredientes.join(', ') : String(ingredientes || '');
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.json({ recipes: getFallbackFridgeRecipes(ingredientes) });
+    }
+
+    const prompt = `Actúa como un chef experto en cocina casera española de aprovechamiento.
+El usuario tiene los siguientes ingredientes en la nevera o despensa: ${ingText || 'Huevos, patatas, verduras'}.
+Tiempo máximo disponible: ${tiempo}.
+Sugiere exactamente 2 o 3 recetas fáciles, deliciosas y realistas para 2-4 personas aprovechando al máximo estos ingredientes.
+Para cada receta proporciona:
+- nombre: nombre apetitoso y claro del plato (ej: "Revuelto cremoso de calabacín y queso con tostadas")
+- tiempo: tiempo estimado de preparación (ej: "15 min")
+- descripcion: breve explicación de 1-2 frases
+- ingredientes_usados: lista de los ingredientes que aprovecha de la nevera
+- ingredientes_extra: lista de básicos que se necesitan (ej: ["Aceite de oliva", "Sal", "Ajo"])
+- pasos: array de 3 o 4 pasos concisos y prácticos de cocina`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: 'Eres un chef especializado en cocina casera de aprovechamiento sin desperdicio. Responde con un array JSON según el esquema.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              nombre: { type: Type.STRING },
+              tiempo: { type: Type.STRING },
+              descripcion: { type: Type.STRING },
+              ingredientes_usados: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              ingredientes_extra: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              pasos: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: ['nombre', 'tiempo', 'descripcion', 'ingredientes_usados', 'pasos'],
+          },
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return res.json({ recipes: parsed });
+    }
+    return res.json({ recipes: getFallbackFridgeRecipes(ingredientes) });
+  } catch (error) {
+    console.warn('Error en fridge-recipes Gemini API:', error.message);
+    return res.json({ recipes: getFallbackFridgeRecipes(req.body?.ingredientes) });
+  }
+});
+
 // Serve static assets from root directory
 app.use(express.static(__dirname));
 
