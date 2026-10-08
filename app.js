@@ -1487,10 +1487,6 @@ passwordRecoveryRequestForm?.addEventListener('submit', async (e) => {
                 <div>
                     <strong>✉️ ¡Enlace de recuperación enviado!</strong><br>
                     Hemos enviado un enlace seguro a <strong>${escapeHtml(email)}</strong>.<br>
-                    <div style="margin-top: 8px; font-size: 12px; line-height: 1.45; background: rgba(79, 70, 229, 0.08); padding: 8px 10px; border-radius: 8px;">
-                        💡 <strong>¿El enlace te abre localhost:3000?</strong><br>
-                        ¡No te preocupes! Copia esa dirección de la barra de tu navegador (o el enlace del correo) y pégala en el recuadro inferior para activar tu nueva contraseña al instante.
-                    </div>
                 </div>
             `;
             recoveryRequestSuccess.classList.remove('hidden');
