@@ -17,7 +17,7 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
     headers: {
-      'User-Agent': 'aistudio-build',
+      'User-Agent': 'Tribuapp-Server',
     },
   },
 });
@@ -368,4 +368,3 @@ app.get('*', (req, res) => {
 app.listen(PORT, HOST, () => {
   console.log(`Tribuapp is running on http://${HOST}:${PORT}`);
 });
-

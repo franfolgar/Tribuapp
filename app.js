@@ -2261,7 +2261,7 @@ function openInviteModal(family) {
         <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: left;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                 <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">🔗 Enlace de acceso:</span>
-                ${customDeployUrl ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Render / Personalizado</span>' : '<span class="chip" style="font-size: 10px; padding: 2px 6px;">AI Studio Público</span>'}
+                ${customDeployUrl ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Personalizado</span>' : '<span class="chip" style="font-size: 10px; padding: 2px 6px;">GitHub Pages</span>'}
             </div>
             <div style="font-size: 12px; word-break: break-all; color: var(--text-main); font-family: monospace; background: var(--card-bg); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 6px;">${escapeHtml(directJoinLink)}</div>
             <div style="font-size: 11px; color: var(--success); font-weight: 600;">✨ Enlace verificado y abierto para familiares</div>
@@ -2306,7 +2306,7 @@ function openInviteModal(family) {
 
     document.getElementById('btn-reset-custom-url')?.addEventListener('click', () => {
         localStorage.removeItem('tribuapp_custom_deploy_url');
-        showToast('Restablecido al enlace público de AI Studio');
+        showToast('Restablecido al enlace de GitHub Pages');
         openInviteModal(family);
     });
 
