@@ -422,6 +422,26 @@ input:focus,
     font-weight: 600;
 }
 
+.member-remove-button {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: var(--card-bg);
+    color: var(--danger);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.member-remove-button:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.member-remove-button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
 [data-theme="dark"] .member-pill,
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .member-pill {
@@ -2153,8 +2173,6 @@ input:focus,
 .fridge-steps-list li {
     margin-bottom: 6px;
 }
-
-
 
 
 

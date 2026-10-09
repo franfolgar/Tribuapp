@@ -2235,6 +2235,37 @@ async function fetchFamilyData() {
     };
 }
 
+async function removeFamilyMember(member) {
+    if (currentProfile?.rol !== 'Admin') {
+        throw new Error('Solo un administrador puede quitar miembros de la familia.');
+    }
+    if (!member || member.id === currentUser?.id || member.rol === 'Admin') {
+        throw new Error('No se puede quitar a este miembro.');
+    }
+    if (!currentProfile.familia_id) {
+        throw new Error('Tu perfil todavía no está vinculado a una familia.');
+    }
+
+    const memberName = member.nombre || 'este miembro';
+    if (!confirm(`¿Quieres quitar a ${memberName} de la familia? Su cuenta de Tribuapp no se eliminará.`)) {
+        return false;
+    }
+
+    const { data, error } = await supabase
+        .from('usuarios')
+        .delete()
+        .eq('id', member.id)
+        .eq('familia_id', currentProfile.familia_id)
+        .neq('rol', 'Admin')
+        .select('id');
+
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('No se pudo quitar al miembro. Puede que ya no pertenezca a esta familia o que falten permisos RLS en Supabase.');
+    }
+    return true;
+}
+
 // --- Invitación a la Tribu Modal ---
 
 function openInviteModal(family) {
@@ -2545,6 +2576,9 @@ async function renderDashboard(renderId) {
                         <span class="member-avatar">${escapeHtml((member.nombre || 'T').charAt(0).toUpperCase())}</span>
                         <span>${escapeHtml(member.nombre || 'Miembro')}</span>
                         ${member.rol === 'Admin' ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Admin</span>' : ''}
+                        ${currentProfile?.rol === 'Admin' && member.id !== currentUser?.id && member.rol !== 'Admin'
+                            ? `<button type="button" class="member-remove-button" data-remove-member="${escapeHtml(member.id)}" aria-label="Quitar a ${escapeHtml(member.nombre || 'este miembro')} de la familia">Quitar</button>`
+                            : ''}
                     </div>
                 `).join('')}
             </div>
@@ -2573,6 +2607,31 @@ async function renderDashboard(renderId) {
     document.getElementById('btn-dash-invite')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-dash-invite-2')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-quick-pantry-review')?.addEventListener('click', openPantryReviewModal);
+
+    mainContent.querySelectorAll('[data-remove-member]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const member = members.find((item) => item.id === button.dataset.removeMember);
+            if (!member) {
+                showToast('No se encontró al miembro seleccionado.');
+                return;
+            }
+
+            button.disabled = true;
+            try {
+                const removed = await removeFamilyMember(member);
+                if (!removed) {
+                    button.disabled = false;
+                    return;
+                }
+                showToast(`${member.nombre || 'El miembro'} ya no pertenece a la familia.`);
+                await renderizarVista('dashboard');
+            } catch (error) {
+                console.error('Error al quitar miembro de la familia:', error);
+                showToast(`No se pudo quitar al miembro: ${error.message}`);
+                button.disabled = false;
+            }
+        });
+    });
 
     document.getElementById('btn-activate-notifs-banner')?.addEventListener('click', async () => {
         const ok = await requestPushPermission();
