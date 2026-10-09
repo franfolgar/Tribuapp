@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v3';
+const CACHE_NAME = 'tribuapp-v4';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -40,24 +40,27 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
+    (async () => {
+      const cachedResponse = await caches.match(event.request);
+      const isAppShell = event.request.mode === 'navigate' ||
+        /\/(index\.html|app\.js|style\.css|manifest\.json)$/.test(url.pathname);
+      if (!isAppShell && cachedResponse) return cachedResponse;
+
+      try {
+        const networkResponse = await fetch(event.request);
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(event.request, networkResponse.clone());
         }
         return networkResponse;
-      }).catch(() => {
-        // If network fails and it is navigation, return cached index.html
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
+      } catch (error) {
+        if (cachedResponse) return cachedResponse;
+        if (isAppShell && event.request.mode === 'navigate') {
+          return caches.match(new URL('./index.html', self.registration.scope).toString());
         }
-      });
-
-      return cachedResponse || fetchPromise;
-    })
+        throw error;
+      }
+    })()
   );
 });
 
