@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v4';
+const CACHE_NAME = 'tribuapp-v5';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -47,7 +47,10 @@ self.addEventListener('fetch', (event) => {
       if (!isAppShell && cachedResponse) return cachedResponse;
 
       try {
-        const networkResponse = await fetch(event.request);
+        const networkRequest = isAppShell
+          ? new Request(event.request, { cache: 'reload' })
+          : event.request;
+        const networkResponse = await fetch(networkRequest);
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const cache = await caches.open(CACHE_NAME);
           await cache.put(event.request, networkResponse.clone());
