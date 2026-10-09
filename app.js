@@ -240,7 +240,7 @@ const joinTribuForm = document.getElementById('join-tribu-form');
 const btnJoinTribu = document.getElementById('btn-join-tribu');
 const tabJoinTribu = document.getElementById('tab-join-tribu');
 const tabCreateTribu = document.getElementById('tab-create-tribu');
-const joinCodigoInput = document.getElementById('join-codigo');
+const joinInviteTokenInput = document.getElementById('join-invite-token');
 const joinNombreInput = document.getElementById('join-nombre-usuario');
 const inviteWelcomeBanner = document.getElementById('invite-welcome-banner');
 const inviteWelcomeText = document.getElementById('invite-welcome-text');
@@ -1121,11 +1121,6 @@ function getTodayWeekDayName() {
     return days[day] || 'Lunes';
 }
 
-function getInviteCode(familyId = '') {
-    const clean = (familyId || 'FAM123').replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase();
-    return `TRIBU-${clean}`;
-}
-
 function getPublicAppUrl() {
     const custom = localStorage.getItem('tribuapp_custom_deploy_url');
     if (custom && custom.startsWith('http')) {
@@ -1144,29 +1139,37 @@ function getPublicAppUrl() {
 function getPendingInvite() {
     try {
         let params = new URLSearchParams(window.location.search);
-        let join = params.get('join');
-        let code = params.get('code');
+        let token = params.get('invite');
         let tribu = params.get('tribu');
 
-        if (!join && !code && window.location.hash && window.location.hash.includes('?')) {
+        if (!token && window.location.hash && window.location.hash.includes('?')) {
             const hashSearch = window.location.hash.substring(window.location.hash.indexOf('?'));
             params = new URLSearchParams(hashSearch);
-            join = params.get('join');
-            code = params.get('code');
+            token = params.get('invite');
             tribu = params.get('tribu');
         }
 
-        if (join || code) {
+        if (params.has('join')) {
+            sessionStorage.removeItem('tribuapp_pending_invite');
+            return null;
+        }
+        if (params.has('invite') && (!token || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token))) {
+            sessionStorage.removeItem('tribuapp_pending_invite');
+            return null;
+        }
+        if (token && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
             const invite = {
-                familyId: join || '',
-                code: code || '',
+                token,
                 tribuName: tribu || 'Familia'
             };
             sessionStorage.setItem('tribuapp_pending_invite', JSON.stringify(invite));
             return invite;
         }
         const saved = sessionStorage.getItem('tribuapp_pending_invite');
-        return saved ? JSON.parse(saved) : null;
+        const invite = saved ? JSON.parse(saved) : null;
+        return invite?.token && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invite.token)
+            ? invite
+            : null;
     } catch {
         return null;
     }
@@ -1780,6 +1783,11 @@ authForm.addEventListener('submit', async (event) => {
             // Intento 1: Registro directo
             const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
             if (!signUpError && signUpData.user) {
+                if (!signUpData.session) {
+                    updateAuthMode('login');
+                    showAuthMessage('Cuenta creada. Confirma tu correo y luego inicia sesión para aceptar la invitación.');
+                    return;
+                }
                 authUser = signUpData.user;
             } else if (signUpError) {
                 const msg = (signUpError.message || '').toLowerCase();
@@ -1802,7 +1810,7 @@ authForm.addEventListener('submit', async (event) => {
             setCurrentUser(authUser);
 
             // Unión automática instantánea a la familia
-            const joinedFamily = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
+            const joinedFamily = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
             showToast(`🎉 ¡Bienvenido/a a ${joinedFamily?.nombre || pendingInvite.tribuName}!`);
             await mostrarApp();
             return;
@@ -1816,11 +1824,8 @@ authForm.addEventListener('submit', async (event) => {
             if (data.session && data.user) {
                 setCurrentUser(data.user);
                 if (pendingInvite) {
-                    try {
-                        await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
-                    } catch (e) {
-                        console.warn('Auto join error:', e);
-                    }
+                    const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
+                    showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
                 }
                 await mostrarApp();
             } else {
@@ -1836,12 +1841,8 @@ authForm.addEventListener('submit', async (event) => {
             setCurrentUser(data.user);
 
             if (pendingInvite) {
-                try {
-                    const joined = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, memberName || getFriendlyUserName());
-                    showToast(`🎉 ¡Te has unido a ${joined?.nombre || pendingInvite.tribuName}!`);
-                } catch (e) {
-                    console.warn('Auto join error on login:', e);
-                }
+                const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
+                showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
             }
             await mostrarApp();
         }
@@ -1918,7 +1919,7 @@ async function mostrarApp() {
         // Si hay una invitación pendiente, unirse automáticamente sin pantallas intermedias
         if (pendingInvite) {
             try {
-                const joined = await handleJoinTribu(pendingInvite.familyId || pendingInvite.code || pendingInvite.tribuName, getFriendlyUserName());
+                const joined = await handleJoinTribu(pendingInvite.token, getFriendlyUserName());
                 showToast(`🎉 ¡Bienvenido/a a "${joined?.nombre || pendingInvite.tribuName}"!`);
                 onboardingView.classList.add('hidden');
                 appView.classList.remove('hidden');
@@ -1927,6 +1928,10 @@ async function mostrarApp() {
                 return;
             } catch (autoErr) {
                 console.warn('Auto-join failed, mostrando onboarding manual:', autoErr);
+                if (onboardingError) {
+                    onboardingError.innerText = autoErr.message || 'No se pudo aceptar la invitación.';
+                    onboardingError.classList.remove('hidden');
+                }
             }
         }
 
@@ -1939,10 +1944,10 @@ async function mostrarApp() {
             tabCreateTribu?.classList.remove('active');
             joinTribuForm?.classList.remove('hidden');
             onboardingForm?.classList.add('hidden');
-            if (joinCodigoInput) joinCodigoInput.value = pendingInvite.code || pendingInvite.familyId;
+            if (joinInviteTokenInput) joinInviteTokenInput.value = pendingInvite.token;
             if (joinNombreInput) joinNombreInput.value = getFriendlyUserName();
             if (inviteDetectedBanner && inviteDetectedText) {
-                inviteDetectedText.innerText = `Te estás uniendo a la tribu "${pendingInvite.tribuName}" (Código: ${pendingInvite.code || pendingInvite.familyId})`;
+                inviteDetectedText.innerText = `Te estás uniendo a la tribu "${pendingInvite.tribuName}" mediante una invitación segura.`;
                 inviteDetectedBanner.classList.remove('hidden');
             }
         } else {
@@ -1952,17 +1957,17 @@ async function mostrarApp() {
     }
 
     // Si el usuario ya tenía perfil pero abre un enlace de otra tribu diferente
-    if (pendingInvite && pendingInvite.familyId && profile.familia_id !== pendingInvite.familyId) {
-        const switchFamily = confirm(`Has recibido una invitación para unirte a la tribu "${pendingInvite.tribuName}". ¿Deseas unirte a esta tribu ahora?`);
-        if (switchFamily) {
-            try {
-                await handleJoinTribu(pendingInvite.familyId || pendingInvite.code, profile.nombre);
-                showToast(`🎉 ¡Te has unido a "${pendingInvite.tribuName}"!`);
-            } catch (err) {
-                showToast(err.message || 'No se pudo cambiar de tribu');
-            }
+    if (pendingInvite) {
+        try {
+            const joined = await handleJoinTribu(pendingInvite.token, profile.nombre);
+            showToast(`🎉 ¡Te has unido a "${joined.nombre}"!`);
+        } catch (err) {
+            authView.classList.remove('hidden');
+            appView.classList.add('hidden');
+            onboardingView.classList.add('hidden');
+            showAuthError(err.message || 'No se pudo aceptar la invitación.');
+            return;
         }
-        sessionStorage.removeItem('tribuapp_pending_invite');
     }
 
     onboardingView.classList.add('hidden');
@@ -1971,83 +1976,40 @@ async function mostrarApp() {
     renderizarVista('dashboard');
 }
 
-async function handleJoinTribu(codigoOId, memberName) {
+async function handleJoinTribu(inviteOrToken, memberName) {
     if (!currentUser) throw new Error('Debes haber iniciado sesión');
 
-    let family = null;
-    const cleanInput = String(codigoOId || '').trim();
-    if (!cleanInput) throw new Error('Introduce un código de invitación o enlace');
-
-    // 1. Búsqueda por UUID exacto
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanInput)) {
-        const { data, error } = await supabase
-            .from('familias')
-            .select('id, nombre, dieta_base')
-            .eq('id', cleanInput)
-            .maybeSingle();
-        if (!error && data) family = data;
-    }
-
-    // 2. Búsqueda segura por prefijo de código o nombre (en JS para evitar errores de casting en PostgreSQL)
-    if (!family) {
-        let prefix = cleanInput.toUpperCase().replace('TRIBU-', '').toLowerCase().trim();
-        const { data: allFamilias, error: famError } = await supabase
-            .from('familias')
-            .select('id, nombre, dieta_base');
-
-        if (!famError && Array.isArray(allFamilias) && allFamilias.length > 0) {
-            if (prefix.length >= 3) {
-                family = allFamilias.find(f => {
-                    const rawId = String(f.id || '').replace(/-/g, '').toLowerCase();
-                    const cleanPref = prefix.replace(/-/g, '');
-                    return rawId.startsWith(cleanPref) || String(f.id || '').toLowerCase().startsWith(prefix);
-                });
-            }
-            if (!family) {
-                family = allFamilias.find(f => f.nombre.toLowerCase().includes(cleanInput.toLowerCase()));
-            }
+    let token = String(inviteOrToken || '').trim();
+    try {
+        if (token.startsWith('http://') || token.startsWith('https://')) {
+            token = new URL(token).searchParams.get('invite') || '';
         }
+    } catch {
+        throw new Error('El enlace de invitación no es válido.');
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+        throw new Error('Usa un enlace de invitación válido; los códigos antiguos ya no se aceptan.');
     }
 
-    if (!family) {
-        throw new Error('No se encontró ninguna tribu con ese código. Comprueba que el enlace sea el correcto.');
+    const { data, error } = await supabase.rpc('aceptar_invitacion_familia', {
+        p_token: token,
+        p_nombre: memberName || getFriendlyUserName(),
+    });
+    if (error) throw error;
+
+    const profile = Array.isArray(data) ? data[0] : data;
+    if (!profile?.familia_id || !profile?.familia_nombre) {
+        throw new Error('La invitación no existe, ha caducado o ya no está disponible.');
     }
 
-    // Guardar o actualizar usuario en la tabla usuarios vinculándolo a la familia ('Usuario' o 'Admin' según usuarios_rol_check)
-    let { data: profile, error: profileError } = await supabase
-        .from('usuarios')
-        .upsert({
-            id: currentUser.id,
-            familia_id: family.id,
-            nombre: memberName || getFriendlyUserName(),
-            rol: 'Usuario',
-        })
-        .select('id, familia_id, nombre, rol')
-        .single();
-
-    if (profileError && profileError.message && profileError.message.includes('usuarios_rol_check')) {
-        const retry = await supabase
-            .from('usuarios')
-            .upsert({
-                id: currentUser.id,
-                familia_id: family.id,
-                nombre: memberName || getFriendlyUserName(),
-                rol: 'Admin',
-            })
-            .select('id, familia_id, nombre, rol')
-            .single();
-
-        if (!retry.error) {
-            profile = retry.data;
-            profileError = null;
-        }
-    }
-
-    if (profileError) throw profileError;
-
-    currentProfile = profile;
+    currentProfile = {
+        id: profile.id,
+        familia_id: profile.familia_id,
+        nombre: profile.nombre,
+        rol: profile.rol,
+    };
     sessionStorage.removeItem('tribuapp_pending_invite');
-    return family;
+    return { id: profile.familia_id, nombre: profile.familia_nombre };
 }
 
 tabJoinTribu?.addEventListener('click', () => {
@@ -2072,11 +2034,11 @@ joinTribuForm?.addEventListener('submit', async (e) => {
     btnJoinTribu.disabled = true;
     btnJoinTribu.innerText = 'Uniéndote...';
 
-    const codigo = joinCodigoInput.value.trim();
+    const inviteToken = joinInviteTokenInput.value.trim();
     const nombre = joinNombreInput.value.trim() || getFriendlyUserName();
 
     try {
-        const family = await handleJoinTribu(codigo, nombre);
+        const family = await handleJoinTribu(inviteToken, nombre);
         showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
         onboardingView.classList.add('hidden');
         appView.classList.remove('hidden');
@@ -2108,33 +2070,18 @@ onboardingForm.addEventListener('submit', async (event) => {
         return;
     }
 
-    let createdFamilyId = null;
     try {
-        const { data: family, error: familyError } = await supabase
-            .from('familias')
-            .insert({
-                nombre: nombreFamilia,
-                dieta_base: dieta,
-                nivel_flexibilidad: flexibilidad,
-            })
-            .select('id')
-            .single();
-
-        if (familyError) throw familyError;
-        createdFamilyId = family.id;
-
-        const { data: profile, error: profileError } = await supabase
-            .from('usuarios')
-            .insert({
-                id: currentUser.id,
-                familia_id: family.id,
-                nombre: getFriendlyUserName(),
-                rol: 'Admin',
-            })
-            .select('id, familia_id, nombre, rol')
-            .single();
-
-        if (profileError) throw profileError;
+        const { data, error } = await supabase.rpc('crear_familia_con_admin', {
+            p_nombre: nombreFamilia,
+            p_dieta_base: dieta,
+            p_nivel_flexibilidad: flexibilidad,
+            p_nombre_usuario: getFriendlyUserName(),
+        });
+        if (error) throw error;
+        const profile = Array.isArray(data) ? data[0] : data;
+        if (!profile?.familia_id || !profile?.id) {
+            throw new Error('Supabase no devolvió el perfil de administrador creado.');
+        }
         currentProfile = profile;
     } catch (error) {
         let message = `No se pudo crear la tribu: ${error.message}`;
@@ -2236,14 +2183,8 @@ async function fetchFamilyData() {
 }
 
 async function removeFamilyMember(member) {
-    if (currentProfile?.rol !== 'Admin') {
-        throw new Error('Solo un administrador puede quitar miembros de la familia.');
-    }
     if (!member || member.id === currentUser?.id || member.rol === 'Admin') {
         throw new Error('No se puede quitar a este miembro.');
-    }
-    if (!currentProfile.familia_id) {
-        throw new Error('Tu perfil todavía no está vinculado a una familia.');
     }
 
     const memberName = member.nombre || 'este miembro';
@@ -2251,27 +2192,40 @@ async function removeFamilyMember(member) {
         return false;
     }
 
-    const { data, error } = await supabase
-        .from('usuarios')
-        .delete()
-        .eq('id', member.id)
-        .eq('familia_id', currentProfile.familia_id)
-        .neq('rol', 'Admin')
-        .select('id');
-
+    const { data, error } = await supabase.rpc('quitar_miembro_familia', {
+        p_usuario_id: member.id,
+    });
     if (error) throw error;
-    if (!Array.isArray(data) || data.length === 0) {
-        throw new Error('No se pudo quitar al miembro. Puede que ya no pertenezca a esta familia o que falten permisos RLS en Supabase.');
-    }
+    if (data !== true) throw new Error('No se pudo quitar al miembro de la familia.');
     return true;
 }
 
 // --- Invitación a la Tribu Modal ---
 
-function openInviteModal(family) {
-    const code = getInviteCode(family?.id);
+async function openInviteModal(family, inviteToken = null) {
+    if (!family?.id) {
+        showToast('No se pudo identificar la familia para crear la invitación.');
+        return;
+    }
+    if (!inviteToken) {
+        const { data, error } = await supabase.rpc('crear_invitacion_familia', {
+            p_familia_id: family.id,
+        });
+        if (error) {
+            console.error('Error al crear invitación segura:', error);
+            showToast(`No se pudo generar el enlace de invitación: ${error.message}`);
+            return;
+        }
+        const invitation = Array.isArray(data) ? data[0] : data;
+        inviteToken = invitation?.token;
+        if (!inviteToken) {
+            showToast('Supabase no devolvió un token de invitación.');
+            return;
+        }
+    }
+
     const publicUrl = getPublicAppUrl();
-    const directJoinLink = `${publicUrl}?join=${encodeURIComponent(family?.id || '')}&code=${encodeURIComponent(code)}&tribu=${encodeURIComponent(family?.nombre || 'Mi Hogar')}`;
+    const directJoinLink = `${publicUrl}?invite=${encodeURIComponent(inviteToken)}&tribu=${encodeURIComponent(family.nombre || 'Mi Hogar')}`;
     const customDeployUrl = localStorage.getItem('tribuapp_custom_deploy_url') || '';
 
     const html = `
@@ -2280,14 +2234,17 @@ function openInviteModal(family) {
             <button class="modal-close" aria-label="Cerrar">✕</button>
         </div>
         <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
-            Comparte este enlace con tus familiares. Al pulsar en él, entrarán directamente a tu tribu sin ningún error de acceso 403:
+            Comparte este enlace solo con las personas que quieras invitar. Al abrirlo, podrán unirse a tu tribu:
         </p>
 
         <div class="invite-code-box">
-            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Código de invitación</div>
-            <div class="invite-code-val">${escapeHtml(code)}</div>
+            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Invitación segura</div>
+            <div class="invite-code-val">${escapeHtml(family.nombre || 'Mi Hogar')}</div>
             <div style="font-size: 11px; color: var(--primary); margin-top: 6px;">Tribu: ${escapeHtml(family?.nombre || 'Mi Hogar')}</div>
         </div>
+        <p style="font-size: 12px; color: var(--text-muted); margin: -4px 0 14px;">
+            El enlace se puede reutilizar y caduca en 7 días.
+        </p>
 
         <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: left;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -2295,7 +2252,7 @@ function openInviteModal(family) {
                 ${customDeployUrl ? '<span class="chip" style="font-size: 10px; padding: 2px 6px;">Personalizado</span>' : '<span class="chip" style="font-size: 10px; padding: 2px 6px;">GitHub Pages</span>'}
             </div>
             <div style="font-size: 12px; word-break: break-all; color: var(--text-main); font-family: monospace; background: var(--card-bg); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 6px;">${escapeHtml(directJoinLink)}</div>
-            <div style="font-size: 11px; color: var(--success); font-weight: 600;">✨ Enlace verificado y abierto para familiares</div>
+            <div style="font-size: 11px; color: var(--success); font-weight: 600;">🔒 Enlace privado para compartir con familiares</div>
         </div>
 
         <!-- Opción para enlazar a Render / GitHub Pages si está desplegado allí -->
@@ -2314,7 +2271,7 @@ function openInviteModal(family) {
         </details>
 
         <div class="form-actions" style="margin-bottom: 12px;">
-            <button type="button" id="btn-copy-code" class="btn-secondary">📋 Copiar enlace y código</button>
+            <button type="button" id="btn-copy-invite-link" class="btn-secondary">📋 Copiar enlace de invitación</button>
         </div>
 
         <button type="button" id="btn-invite-wa" class="btn-primary btn-whatsapp" style="width: 100%;">
@@ -2329,7 +2286,7 @@ function openInviteModal(family) {
         if (inputVal && inputVal.startsWith('http')) {
             localStorage.setItem('tribuapp_custom_deploy_url', inputVal.replace(/\/$/, ''));
             showToast('✅ URL de despliegue guardada');
-            openInviteModal(family);
+            openInviteModal(family, inviteToken);
         } else {
             showToast('Introduce una URL válida que empiece por https://');
         }
@@ -2338,21 +2295,21 @@ function openInviteModal(family) {
     document.getElementById('btn-reset-custom-url')?.addEventListener('click', () => {
         localStorage.removeItem('tribuapp_custom_deploy_url');
         showToast('Restablecido al enlace de GitHub Pages');
-        openInviteModal(family);
+        openInviteModal(family, inviteToken);
     });
 
-    document.getElementById('btn-copy-code')?.addEventListener('click', async () => {
-        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar "${family?.nombre || 'Familia'}" en Tribuapp.\n\nCódigo: ${code}\nEnlace directo: ${directJoinLink}`;
+    document.getElementById('btn-copy-invite-link')?.addEventListener('click', async () => {
+        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar "${family?.nombre || 'Familia'}" en Tribuapp.\n\nEnlace seguro (válido durante 7 días): ${directJoinLink}`;
         try {
             await navigator.clipboard.writeText(text);
-            showToast('¡Enlace público y código copiados!');
+            showToast('¡Enlace de invitación copiado!');
         } catch {
-            showToast(`Código: ${code}`);
+            showToast('No se pudo copiar. Selecciona y copia el enlace manualmente.');
         }
     });
 
     document.getElementById('btn-invite-wa')?.addEventListener('click', () => {
-        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar *${family?.nombre || 'Familia'}* en Tribuapp.\n\nCódigo de acceso: *${code}*\n\n👉 Entra directamente aquí para unirte a la familia:\n${directJoinLink}`;
+        const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar *${family?.nombre || 'Familia'}* en Tribuapp.\n\n👉 Entra directamente aquí para unirte a la familia (enlace válido 7 días):\n${directJoinLink}`;
         window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
     });
 }
@@ -2361,8 +2318,9 @@ btnInviteFamily?.addEventListener('click', async () => {
     try {
         const { family } = await fetchFamilyData();
         openInviteModal(family);
-    } catch {
-        openInviteModal({ id: 'TRIBU1', nombre: 'Mi Familia' });
+    } catch (error) {
+        console.error('No se pudo cargar la familia para invitar:', error);
+        showToast(`No se pudo abrir la invitación: ${error.message}`);
     }
 });
 
