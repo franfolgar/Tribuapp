@@ -3102,6 +3102,7 @@ function openAIGeneratorModal() {
                 <p style="font-weight: 700; margin-top: 10px; color: var(--primary);">Diseñando menú con Gemini...</p>
                 <p style="font-size: 12px; color: var(--text-muted);">Calculando variedad de platos y combinaciones de ingredientes.</p>
             </div>
+            <p id="ai-error" class="error-text hidden" role="alert"></p>
 
             <div class="modal-footer" id="ai-modal-footer">
                 <button type="submit" class="btn-primary btn-ai">✨ Generar menú inteligente</button>
@@ -3116,21 +3117,32 @@ function openAIGeneratorModal() {
         e.preventDefault();
         const statusBox = document.getElementById('ai-status-box');
         const footer = document.getElementById('ai-modal-footer');
+        const errorBox = document.getElementById('ai-error');
         const dieta = document.getElementById('ai-dieta').value;
         const preferencias = document.getElementById('ai-preferencias').value.trim();
 
+        if (errorBox) errorBox.classList.add('hidden');
         if (statusBox) statusBox.classList.remove('hidden');
         if (footer) footer.classList.add('hidden');
 
         try {
-            const res = await fetch('/api/gemini/generate-menu', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ dieta, preferencias })
+            const { data, error } = await supabase.functions.invoke('generate-menu', {
+                body: { dieta, preferencias }
             });
-            const data = await res.json();
-            if (!data.menu || !Array.isArray(data.menu) || !data.menu.length) {
-                throw new Error('Respuesta de menú no válida');
+            if (error) {
+                let message = error.message || 'No se pudo conectar con el generador de menús.';
+                if (error.context instanceof Response) {
+                    try {
+                        const details = await error.context.clone().json();
+                        if (typeof details.error === 'string') message = details.error;
+                    } catch {
+                        // Conserva el mensaje de Functions si el servidor no devolvió JSON.
+                    }
+                }
+                throw new Error(message);
+            }
+            if (!Array.isArray(data?.menu) || data.menu.length !== 12) {
+                throw new Error('Gemini no devolvió los 12 platos esperados. Inténtalo de nuevo.');
             }
 
             const state = getAppState();
@@ -3157,31 +3169,13 @@ function openAIGeneratorModal() {
                 openPantryReviewModal();
             }, 600);
         } catch (err) {
-            console.warn('Backend API no disponible (modo estático/GitHub Pages), usando menú equilibrado:', err);
-            const fallbackList = getClientCuratedMenu(dieta);
-            const state = getAppState();
-            state.menu = fallbackList.map(m => ({
-                id: crypto.randomUUID(),
-                dia: m.dia,
-                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
-            saveAppState(state);
-
-            showToast('¡Menú semanal cargado con éxito!');
-            closeModal();
-            renderMenuView();
-
-            showServiceWorkerNotification('🍽️ Menú semanal planificado', {
-                body: `Se ha configurado el menú familiar (${dieta}) con recetas equilibradas.`,
-                data: { view: 'menus', url: './' }
-            });
-
-            setTimeout(() => {
-                openPantryReviewModal();
-            }, 600);
+            console.error('No se pudo generar el menú con Gemini:', err);
+            if (statusBox) statusBox.classList.add('hidden');
+            if (footer) footer.classList.remove('hidden');
+            if (errorBox) {
+                errorBox.textContent = `No se pudo generar el menú con IA: ${err.message || 'Error inesperado.'}`;
+                errorBox.classList.remove('hidden');
+            }
         }
     });
 }
