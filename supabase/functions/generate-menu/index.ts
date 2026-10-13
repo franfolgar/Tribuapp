@@ -115,7 +115,7 @@ Incluye entre 4 y 6 ingredientes con cantidades razonables para 4 personas. Resp
 
   try {
     const geminiResponse = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
       {
         method: "POST",
         headers: {
