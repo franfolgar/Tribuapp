@@ -3043,7 +3043,16 @@ function openRecipeModal(dish) {
                 }
             });
 
-            if (error) throw new Error(error.message || 'No se pudo contactar con Gemini.');
+            if (error) {
+                let message = error.message || 'No se pudo contactar con Gemini.';
+                if (error.context instanceof Response) {
+                    try {
+                        const details = await error.context.clone().json();
+                        if (typeof details.error === 'string') message = details.error;
+                    } catch {}
+                }
+                throw new Error(message);
+            }
             if (!data?.recipe) throw new Error('No se recibieron los pasos de la receta.');
 
             const r = data.recipe;
@@ -3137,7 +3146,16 @@ function openSwapDishModal(dish) {
                 }
             });
 
-            if (error) throw new Error(error.message || 'No se pudo contactar con Gemini.');
+            if (error) {
+                let message = error.message || 'No se pudo contactar con Gemini.';
+                if (error.context instanceof Response) {
+                    try {
+                        const details = await error.context.clone().json();
+                        if (typeof details.error === 'string') message = details.error;
+                    } catch {}
+                }
+                throw new Error(message);
+            }
             if (!Array.isArray(data?.alternatives) || !data.alternatives.length) {
                 throw new Error('Gemini no devolvió alternativas válidas.');
             }
@@ -3304,7 +3322,16 @@ function openFridgeModal() {
                 }
             });
 
-            if (error) throw new Error(error.message || 'No se pudo conectar con Gemini.');
+            if (error) {
+                let message = error.message || 'No se pudo conectar con Gemini.';
+                if (error.context instanceof Response) {
+                    try {
+                        const details = await error.context.clone().json();
+                        if (typeof details.error === 'string') message = details.error;
+                    } catch {}
+                }
+                throw new Error(message);
+            }
             if (!Array.isArray(data?.recipes) || !data.recipes.length) {
                 throw new Error('Gemini no pudo encontrar recetas con esos ingredientes.');
             }
