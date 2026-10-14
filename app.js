@@ -1938,7 +1938,21 @@ authForm.addEventListener('submit', async (event) => {
                     showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
                 }
                 await mostrarApp();
-            } else {
+            } else if (data.user) {
+                try {
+                    const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+                    if (!signErr && signData?.session && signData?.user) {
+                        setCurrentUser(signData.user);
+                        if (pendingInvite) {
+                            const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
+                            showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
+                        }
+                        await mostrarApp();
+                        return;
+                    }
+                } catch (autoLoginErr) {
+                    console.warn('Auto-login post-signup no completado:', autoLoginErr);
+                }
                 updateAuthMode('login');
                 showAuthMessage('Cuenta creada con éxito. Ya puedes iniciar sesión.');
             }
