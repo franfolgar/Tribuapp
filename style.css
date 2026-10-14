@@ -1215,6 +1215,125 @@ input:focus,
     color: #7c3aed;
 }
 
+/* Opciones de Vista de Tareas y Filtro Completadas */
+.task-view-options {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 6px 2px;
+}
+
+.toggle-hide-completed {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-hide-completed input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.task-karma-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #eab308;
+    background: rgba(234, 179, 8, 0.12);
+    border: 1px solid rgba(234, 179, 8, 0.25);
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.task-karma-summary:hover {
+    background: rgba(234, 179, 8, 0.22);
+}
+
+.task-points-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: #eab308;
+    background: rgba(234, 179, 8, 0.12);
+    border-radius: 6px;
+    padding: 2px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid rgba(234, 179, 8, 0.2);
+}
+
+/* Podio en modo oscuro */
+[data-theme="dark"] .karma-panel,
+:root:not([data-theme="light"]) .karma-panel {
+    background: linear-gradient(135deg, #1e1b4b 0%, #172554 100%);
+    border-color: #3730a3;
+}
+
+[data-theme="dark"] .podium-card,
+:root:not([data-theme="light"]) .podium-card {
+    background: #1e293b;
+    border-color: #334155;
+    color: #f1f5f9;
+}
+
+[data-theme="dark"] .podium-name,
+:root:not([data-theme="light"]) .podium-name {
+    color: #f1f5f9;
+}
+
+[data-theme="dark"] .podium-points,
+:root:not([data-theme="light"]) .podium-points {
+    color: #a78bfa;
+}
+
+/* Confetti Burst Animation */
+.confetti-burst-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 9999;
+    overflow: hidden;
+}
+
+.confetti-particle {
+    position: absolute;
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+    animation: confettiBurst 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes confettiBurst {
+    0% {
+        opacity: 1;
+        transform: translate(0, 0) scale(0.6) rotate(0deg);
+    }
+    45% {
+        opacity: 1;
+        transform: translate(var(--tx), var(--ty)) scale(1.15) rotate(calc(var(--rot) * 0.5));
+    }
+    100% {
+        opacity: 0;
+        transform: translate(var(--tx), calc(var(--ty) + 140px)) scale(0.6) rotate(var(--rot));
+    }
+}
+
 /* Pantry & Ingredients Review */
 .pantry-checklist {
     max-height: 320px;

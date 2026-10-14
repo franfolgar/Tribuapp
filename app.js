@@ -61,10 +61,10 @@ function getAisleCategory(itemName = '') {
 
 const defaultState = {
     shopping: [
-        { id: 'shop-1', nombre: 'Leche entera', cantidad: '2 L', seccion: 'Lácteos y Huevos', comprado: false },
-        { id: 'shop-2', nombre: 'Huevos de campo', cantidad: '1 docena', seccion: 'Lácteos y Huevos', comprado: false },
-        { id: 'shop-3', nombre: 'Plátanos de Canarias', cantidad: '1 kg', seccion: 'Frutas y Verduras', comprado: false },
-        { id: 'shop-4', nombre: 'Aceite de oliva virgen extra', cantidad: '1 botella', seccion: 'Despensa y Legumbres', comprado: true }
+        { id: 'a0000000-0000-4000-8000-000000000001', nombre: 'Leche entera', cantidad: '2 L', seccion: 'Lácteos y Huevos', comprado: false },
+        { id: 'a0000000-0000-4000-8000-000000000002', nombre: 'Huevos de campo', cantidad: '1 docena', seccion: 'Lácteos y Huevos', comprado: false },
+        { id: 'a0000000-0000-4000-8000-000000000003', nombre: 'Plátanos de Canarias', cantidad: '1 kg', seccion: 'Frutas y Verduras', comprado: false },
+        { id: 'a0000000-0000-4000-8000-000000000004', nombre: 'Aceite de oliva virgen extra', cantidad: '1 botella', seccion: 'Despensa y Legumbres', comprado: true }
     ],
     menu: [
         {
@@ -261,7 +261,9 @@ let currentProfile = null;
 let authMode = 'login';
 let currentView = 'dashboard';
 let viewRenderId = 0;
-let currentTaskFilter = 'all'; // 'all' | 'mine' | 'pool'
+let currentTaskFilter = 'all'; // 'all' | 'today' | 'mine' | 'pool'
+let hideCompletedTasks = false;
+let showPodiumView = false;
 let currentMenuDayFilter = 'Todos'; // 'Todos' or day name
 
 const btnThemeToggle = document.getElementById('btn-theme-toggle');
@@ -1123,6 +1125,17 @@ async function persistMenuToSupabase(menuList) {
 
 async function persistShoppingItemToSupabase(item, action = 'upsert') {
     if (!currentProfile?.familia_id || !item?.id) return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id);
+    if (!isUuid) {
+        if (action === 'delete') return;
+        const oldId = item.id;
+        item.id = crypto.randomUUID();
+        const state = getAppState();
+        const found = state.shopping.find(s => s.id === oldId || s.nombre === item.nombre);
+        if (found) found.id = item.id;
+        saveAppState(state);
+        action = 'upsert';
+    }
     try {
         if (action === 'delete') {
             await supabase.from('familias_compras').delete().eq('id', item.id);
@@ -1163,6 +1176,55 @@ function addKarmaPoints(memberId, points = 10) {
     karma[id] = (karma[id] || 0) + points;
     saveToStorage(STORAGE_KEYS.karma, karma);
     return karma[id];
+}
+
+function triggerConfetti() {
+    try {
+        const container = document.createElement('div');
+        container.className = 'confetti-burst-container';
+        document.body.appendChild(container);
+
+        const colors = ['#f59e0b', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6', '#f97316'];
+        const emojis = ['⭐', '🎉', '🌟', '👏', '🏆', '✨', '🎈'];
+        const count = 38;
+
+        for (let i = 0; i < count; i++) {
+            const piece = document.createElement('div');
+            piece.className = 'confetti-particle';
+            const isEmoji = i % 5 === 0;
+            if (isEmoji) {
+                piece.innerText = emojis[Math.floor(Math.random() * emojis.length)];
+                piece.style.fontSize = `${16 + Math.random() * 12}px`;
+            } else {
+                piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                piece.style.width = `${7 + Math.random() * 8}px`;
+                piece.style.height = `${9 + Math.random() * 10}px`;
+                piece.style.borderRadius = Math.random() > 0.4 ? '50%' : '3px';
+            }
+
+            const startX = 45 + (Math.random() - 0.5) * 30;
+            const startY = 48 + (Math.random() - 0.5) * 20;
+            const angle = Math.random() * 360;
+            const distance = 80 + Math.random() * 200;
+            const rad = (angle * Math.PI) / 180;
+            const targetX = Math.cos(rad) * distance;
+            const targetY = Math.sin(rad) * distance - 60;
+            const rot = (Math.random() - 0.5) * 720;
+
+            piece.style.left = `${startX}%`;
+            piece.style.top = `${startY}%`;
+            piece.style.setProperty('--tx', `${targetX}px`);
+            piece.style.setProperty('--ty', `${targetY}px`);
+            piece.style.setProperty('--rot', `${rot}deg`);
+            piece.style.animationDuration = `${1.0 + Math.random() * 0.6}s`;
+
+            container.appendChild(piece);
+        }
+
+        setTimeout(() => container.remove(), 1800);
+    } catch (e) {
+        console.warn('Error rendering confetti:', e);
+    }
 }
 
 function showToast(message) {
@@ -2234,6 +2296,10 @@ navItems.forEach((item) => {
 });
 
 async function renderizarVista(vista) {
+    closeModal();
+    const smModal = document.getElementById('supermarket-modal');
+    if (smModal) smModal.remove();
+
     currentView = vista;
     const titles = { dashboard: 'Resumen', tareas: 'Tareas', menus: 'Menú', compra: 'Compra' };
     viewTitle.innerText = titles[vista] || 'Resumen';
@@ -2451,6 +2517,9 @@ async function renderDashboard(renderId) {
     const [{ family, members, tasks }, localState] = await Promise.all([fetchFamilyData(), getAppState()]);
     if (renderId !== viewRenderId) return;
 
+    const karmaMap = getKarmaPoints();
+    const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
+
     if (headerTribeBadge) {
         headerTribeBadge.innerText = `⛺ ${family.nombre}`;
         headerTribeBadge.classList.remove('hidden');
@@ -2572,7 +2641,8 @@ async function renderDashboard(renderId) {
                 <p class="eyebrow">Resumen del hogar</p>
                 <h3>${escapeHtml(family.nombre)}</h3>
             </div>
-            <div style="display: flex; gap: 6px; align-items: center;">
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                <span class="chip" style="color: #eab308; background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.25); font-weight: 600;" title="Puntos acumulados por la tribu">⭐ ${totalKarma} pts</span>
                 <span class="chip">${escapeHtml(family.dieta_base || 'Dieta')}</span>
                 <button type="button" id="btn-dash-invite" class="chip" style="cursor: pointer;">👥 Invitar</button>
             </div>
@@ -2760,9 +2830,27 @@ async function completarTarea(taskId) {
         }
     }
 
-    showToast('¡Tarea completada!');
+    // 3. Puntos Tribu y Gamificación infantil / familiar
+    const assignedMemberId = task?.asignado_a || currentProfile?.id;
+    const newTotalPoints = addKarmaPoints(assignedMemberId, 10);
+    triggerConfetti();
 
-    // 3. Recurrencia: programar próxima aparición automática si es periódica (solo tareas reales de la tribu)
+    if ('vibrate' in navigator) {
+        try { navigator.vibrate([40, 50, 40]); } catch {}
+    }
+
+    showToast(`🎉 ¡Tarea completada! +10 Puntos Tribu ⭐ (Total: ${newTotalPoints} pts)`);
+
+    // Comprobar si todas las tareas de hoy están completadas
+    const todayIso = getLocalDateInputValue();
+    const remainingToday = updated.filter(t => t.fecha_objetivo === todayIso && t.estado !== 'Completada');
+    if (remainingToday.length === 0 && updated.some(t => t.fecha_objetivo === todayIso)) {
+        setTimeout(() => {
+            showToast('🏆 ¡Todas las tareas de hoy completadas! Medalla de oro para la tribu.');
+        }, 800);
+    }
+
+    // 4. Recurrencia: programar próxima aparición automática si es periódica (solo tareas reales de la tribu)
     if (!isDemo && task && task.recurrencia && task.recurrencia !== 'Puntual') {
         const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
         if (nextDate) {
@@ -2829,19 +2917,35 @@ async function cargarVistaTareas(renderId) {
     const { members, tasks } = await fetchFamilyData();
     if (renderId !== viewRenderId) return;
 
+    const karmaMap = getKarmaPoints();
+    const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
+    const sortedMembers = [...members].map(m => ({
+        ...m,
+        puntos: karmaMap[m.id] || 0
+    })).sort((a, b) => b.puntos - a.puntos);
+
     // Filter tasks
     const mineTasks = tasks.filter(t => t.asignado_a === currentProfile?.id);
     const poolTasks = tasks.filter(t => !t.asignado_a);
-
-    let displayTasks = tasks;
-    if (currentTaskFilter === 'mine') displayTasks = mineTasks;
-    else if (currentTaskFilter === 'pool') displayTasks = poolTasks;
 
     const todayIso = getLocalDateInputValue();
     const tasksForToday = tasks.filter(t => t.fecha_objetivo === todayIso);
     const completedToday = tasksForToday.filter(t => t.estado === 'Completada');
     const pendingToday = tasksForToday.filter(t => t.estado !== 'Completada');
     const todayPercent = tasksForToday.length > 0 ? Math.round((completedToday.length / tasksForToday.length) * 100) : (pendingToday.length === 0 ? 100 : 0);
+
+    let displayTasks = tasks;
+    if (currentTaskFilter === 'today') {
+        displayTasks = tasksForToday;
+    } else if (currentTaskFilter === 'mine') {
+        displayTasks = mineTasks;
+    } else if (currentTaskFilter === 'pool') {
+        displayTasks = poolTasks;
+    }
+
+    if (hideCompletedTasks) {
+        displayTasks = displayTasks.filter(t => t.estado !== 'Completada');
+    }
 
     mainContent.innerHTML = `
         <div class="section-header">
@@ -2869,9 +2973,43 @@ async function cargarVistaTareas(renderId) {
         <!-- Filtros rápidos -->
         <div class="filter-tabs">
             <button type="button" class="filter-tab ${currentTaskFilter === 'all' ? 'active' : ''}" data-task-filter="all">Todas (${tasks.length})</button>
+            <button type="button" class="filter-tab ${currentTaskFilter === 'today' ? 'active' : ''}" data-task-filter="today">📅 Solo hoy (${tasksForToday.length})</button>
             <button type="button" class="filter-tab ${currentTaskFilter === 'mine' ? 'active' : ''}" data-task-filter="mine">👤 Mis tareas (${mineTasks.length})</button>
             <button type="button" class="filter-tab ${currentTaskFilter === 'pool' ? 'active' : ''}" data-task-filter="pool">🧺 Bolsa común (${poolTasks.length})</button>
         </div>
+
+        <!-- Opciones de visualización y Gamificación infantil -->
+        <div class="task-view-options">
+            <label class="toggle-hide-completed" title="Ocultar tareas que ya están hechas para ver solo pendientes">
+                <input type="checkbox" id="chk-hide-completed" ${hideCompletedTasks ? 'checked' : ''}>
+                <span>👁️ Ocultar completadas</span>
+            </label>
+            <button type="button" class="task-karma-summary" id="btn-toggle-podium" title="Ver Podio Familiar y Puntos Tribu">
+                <span>⭐ <strong>${totalKarma}</strong> Puntos Tribu</span>
+                <span style="font-size: 11px; opacity: 0.85;">${showPodiumView ? '▲ Cerrar' : '▼ 🏆 Podio'}</span>
+            </button>
+        </div>
+
+        ${showPodiumView ? `
+            <div class="panel karma-panel" style="margin-bottom: 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <strong style="font-size: 14px;">🏆 Podio Familiar de la Tribu</strong>
+                    <span style="font-size: 11px; color: var(--text-muted);">+10 pts por tarea</span>
+                </div>
+                <div class="podium-grid">
+                    ${sortedMembers.map((m, idx) => {
+                        const medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : '⭐'));
+                        return `
+                            <div class="podium-card">
+                                <span class="podium-medal">${medal}</span>
+                                <span class="podium-name">${escapeHtml(m.nombre)}</span>
+                                <span class="podium-points">${m.puntos} pts</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        ` : ''}
 
         <form id="form-nueva-tarea" class="panel hidden">
             <label for="nueva-tarea-nombre">Nombre de la tarea</label>
@@ -2887,7 +3025,7 @@ async function cargarVistaTareas(renderId) {
                 </div>
                 <div>
                     <label for="nueva-tarea-fecha">Fecha límite</label>
-                    <input type="date" id="nueva-tarea-fecha" class="input-select" required>
+                    <input type="date" id="nueva-tarea-fecha" class="input-select" value="${todayIso}">
                 </div>
             </div>
 
@@ -2915,7 +3053,7 @@ async function cargarVistaTareas(renderId) {
     if (!displayTasks.length) {
         lista.innerHTML = `
             <div class="empty-dashboard-block">
-                <p>No hay tareas en esta sección.</p>
+                <p>${hideCompletedTasks ? '✨ ¡Todas las tareas de esta sección están hechas!' : 'No hay tareas en esta sección.'}</p>
                 <button type="button" class="btn-secondary btn-inline" id="btn-empty-add-task">+ Crear nueva tarea</button>
             </div>
         `;
@@ -2936,6 +3074,7 @@ async function cargarVistaTareas(renderId) {
                     <div style="flex: 1;">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
+                            <span class="task-points-badge" title="Puntos al completar">⭐ +10</span>
                             ${isOverdue ? '<span class="badge-overdue">Atrasada</span>' : ''}
                         </div>
                         <div class="today-task-meta" style="margin-top: 4px;">
@@ -2961,6 +3100,16 @@ async function cargarVistaTareas(renderId) {
             currentTaskFilter = tab.dataset.taskFilter;
             cargarVistaTareas(renderId);
         });
+    });
+
+    document.getElementById('chk-hide-completed')?.addEventListener('change', (e) => {
+        hideCompletedTasks = e.target.checked;
+        cargarVistaTareas(renderId);
+    });
+
+    document.getElementById('btn-toggle-podium')?.addEventListener('click', () => {
+        showPodiumView = !showPodiumView;
+        cargarVistaTareas(renderId);
     });
 
     document.getElementById('btn-nueva-tarea').addEventListener('click', () => {
@@ -2997,11 +3146,11 @@ async function cargarVistaTareas(renderId) {
         const button = document.getElementById('btn-guardar-tarea');
         const nombre = document.getElementById('nueva-tarea-nombre').value.trim();
         const asignadoA = document.getElementById('nueva-tarea-asignado').value || null;
-        const fecha = document.getElementById('nueva-tarea-fecha').value;
+        const fecha = document.getElementById('nueva-tarea-fecha').value || getLocalDateInputValue();
         const recurrencia = document.getElementById('nueva-tarea-recurrencia').value || 'Puntual';
 
-        if (!nombre || !fecha) {
-            alert('El nombre y la fecha son obligatorios.');
+        if (!nombre) {
+            alert('El nombre de la tarea es obligatorio.');
             return;
         }
 
@@ -3876,13 +4025,28 @@ function openAIGeneratorModal() {
                 openPantryReviewModal();
             }, 600);
         } catch (err) {
-            console.error('No se pudo generar el menú con Gemini:', err);
-            if (statusBox) statusBox.classList.add('hidden');
-            if (footer) footer.classList.remove('hidden');
-            if (errorBox) {
-                errorBox.textContent = `No se pudo generar el menú con IA: ${err.message || 'Error inesperado.'}`;
-                errorBox.classList.remove('hidden');
-            }
+            console.warn('IA no disponible en este momento, usando menú seleccionado del chef:', err);
+            // Fallback de alta resiliencia: si Gemini está sobrecargado (503/429) o hay error de red
+            const curated = getClientCuratedMenu(dieta);
+            const state = getAppState();
+            state.menu = curated.map(m => ({
+                id: crypto.randomUUID(),
+                dia: m.dia,
+                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
+                nombre: m.nombre,
+                tiempo: m.tiempo || '25 min',
+                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
+            }));
+            saveAppState(state);
+            persistMenuToSupabase(state.menu);
+
+            showToast('Menú del chef cargado con éxito');
+            closeModal();
+            renderMenuView();
+
+            setTimeout(() => {
+                openPantryReviewModal();
+            }, 600);
         }
     });
 }
