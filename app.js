@@ -756,15 +756,16 @@ function openQuickAddShoppingModal() {
         const seccion = secVal === 'auto' ? getAisleCategory(nombre) : secVal;
 
         if (!nombre) return;
-        const state = getAppState();
-        state.shopping.push({
+        const newItem = {
             id: crypto.randomUUID(),
             nombre,
             cantidad,
             seccion,
             comprado: false
-        });
+        };
+        state.shopping.push(newItem);
         saveAppState(state);
+        persistShoppingItemToSupabase(newItem, 'upsert');
         showToast(`🛒 "${nombre}" añadido a la compra`);
         closeModal();
         if (currentView === 'dashboard' || currentView === 'compra') {
@@ -953,15 +954,22 @@ function openQuickAddMealModal() {
 
         if (!nombre) return;
         const state = getAppState();
-        state.menu.push({
-            id: crypto.randomUUID(),
+        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
+        const newMeal = {
+            id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
             dia,
             tipo,
             nombre,
             tiempo,
             ingredientes
-        });
+        };
+        if (existingIdx >= 0) {
+            state.menu[existingIdx] = newMeal;
+        } else {
+            state.menu.push(newMeal);
+        }
         saveAppState(state);
+        persistMenuToSupabase(state.menu);
         showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
         closeModal();
 
@@ -1040,6 +1048,104 @@ function saveAppState(state) {
     showToast('Error de almacenamiento local en el navegador');
     return false;
 }
+
+async function syncFamilyDataFromSupabase() {
+    if (!currentProfile?.familia_id) return;
+    try {
+        const [menuRes, shopRes] = await Promise.all([
+            supabase.from('familias_menus')
+                .select('*')
+                .eq('familia_id', currentProfile.familia_id),
+            supabase.from('familias_compras')
+                .select('*')
+                .eq('familia_id', currentProfile.familia_id)
+                .order('creado_en', { ascending: true })
+        ]);
+
+        const state = getAppState();
+        let stateChanged = false;
+
+        if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length > 0) {
+            state.menu = menuRes.data.map(m => ({
+                id: m.id,
+                dia: m.dia,
+                tipo: m.tipo,
+                nombre: m.nombre,
+                tiempo: m.tiempo || '25 min',
+                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
+            }));
+            stateChanged = true;
+        } else if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length === 0 && state.menu.length > 0) {
+            // Migración inicial: subir menú local existente a Supabase
+            await persistMenuToSupabase(state.menu);
+        }
+
+        if (!shopRes.error && Array.isArray(shopRes.data)) {
+            state.shopping = shopRes.data.map(s => ({
+                id: s.id,
+                nombre: s.nombre,
+                cantidad: s.cantidad || '',
+                seccion: s.seccion || getAisleCategory(s.nombre),
+                comprado: !!s.comprado
+            }));
+            stateChanged = true;
+        }
+
+        if (stateChanged) {
+            saveToStorage(STORAGE_KEYS.app, state);
+        }
+    } catch (e) {
+        console.warn('Error sincronizando datos familiares de Supabase:', e);
+    }
+}
+
+async function persistMenuToSupabase(menuList) {
+    if (!currentProfile?.familia_id || !Array.isArray(menuList) || !menuList.length) return;
+    try {
+        const records = menuList.map(item => ({
+            familia_id: currentProfile.familia_id,
+            dia: item.dia,
+            tipo: item.tipo,
+            nombre: item.nombre,
+            tiempo: item.tiempo || '25 min',
+            ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
+            actualizado_en: new Date().toISOString()
+        }));
+        await supabase.from('familias_menus').upsert(records, { onConflict: 'familia_id,dia,tipo' });
+    } catch (err) {
+        console.warn('No se pudo guardar el menú en Supabase:', err);
+    }
+}
+
+async function persistShoppingItemToSupabase(item, action = 'upsert') {
+    if (!currentProfile?.familia_id || !item?.id) return;
+    try {
+        if (action === 'delete') {
+            await supabase.from('familias_compras').delete().eq('id', item.id);
+        } else if (action === 'update') {
+            await supabase.from('familias_compras').update({
+                nombre: item.nombre,
+                cantidad: item.cantidad || '',
+                seccion: item.seccion || 'General',
+                comprado: !!item.comprado,
+                actualizado_en: new Date().toISOString()
+            }).eq('id', item.id);
+        } else {
+            await supabase.from('familias_compras').upsert({
+                id: item.id,
+                familia_id: currentProfile.familia_id,
+                nombre: item.nombre,
+                cantidad: item.cantidad || '',
+                seccion: item.seccion || 'General',
+                comprado: !!item.comprado,
+                actualizado_en: new Date().toISOString()
+            });
+        }
+    } catch (err) {
+        console.warn('No se pudo sincronizar la compra en Supabase:', err);
+    }
+}
+
 
 function getKarmaPoints() {
     return readFromStorage(STORAGE_KEYS.karma, {
@@ -1973,6 +2079,7 @@ async function mostrarApp() {
     onboardingView.classList.add('hidden');
     appView.classList.remove('hidden');
     if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+    await syncFamilyDataFromSupabase();
     renderizarVista('dashboard');
 }
 
@@ -2517,8 +2624,9 @@ async function renderDashboard(renderId) {
                 <button type="button" class="text-button" data-nav-view="menus">Ver semana →</button>
             </div>
             ${todayMenuHtml}
-            <div style="display: flex; gap: 8px; margin-top: 14px;">
-                <button type="button" id="btn-quick-pantry-review" class="btn-secondary" style="font-size: 12px; padding: 8px 12px; flex: 1;">🛒 Revisar despensa y comprar</button>
+            <div style="display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;">
+                <button type="button" id="btn-quick-pantry-review" class="btn-secondary" style="font-size: 12px; padding: 8px 12px; flex: 1;">🛒 Revisar despensa</button>
+                <button type="button" id="btn-dash-fridge" class="btn-secondary" style="font-size: 12px; padding: 8px 12px; flex: 1;">🧊 ¿Qué cocino hoy?</button>
             </div>
         </section>
 
@@ -2565,6 +2673,7 @@ async function renderDashboard(renderId) {
     document.getElementById('btn-dash-invite')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-dash-invite-2')?.addEventListener('click', () => openInviteModal(family));
     document.getElementById('btn-quick-pantry-review')?.addEventListener('click', openPantryReviewModal);
+    document.getElementById('btn-dash-fridge')?.addEventListener('click', openFridgeModal);
 
     mainContent.querySelectorAll('[data-remove-member]').forEach((button) => {
         button.addEventListener('click', async () => {
@@ -2879,11 +2988,23 @@ function openRecipeModal(dish) {
             <h3>🍲 ${escapeHtml(dish.nombre)}</h3>
             <button class="modal-close" aria-label="Cerrar">✕</button>
         </div>
-        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+        <div style="display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;">
             <span class="day-badge">${escapeHtml(dish.dia)}</span>
             <span class="meal-badge ${dish.tipo === 'Cena' ? 'cena' : 'comida'}">${dish.tipo === 'Cena' ? '🌙 Cena' : '☀️ Comida'}</span>
             <span class="chip" style="font-size: 11px;">⏱️ ${escapeHtml(dish.tiempo || '25 min')}</span>
         </div>
+
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+            <button type="button" id="btn-chef-steps" class="btn-primary" style="flex: 1; padding: 10px 12px; font-size: 12px; background: linear-gradient(135deg, #4f46e5, #7c3aed); border: none;">
+                👨‍🍳 ¿Cómo se cocina? (Paso a paso IA)
+            </button>
+            <button type="button" id="btn-swap-recipe-dish" class="btn-secondary" style="padding: 10px 12px; font-size: 12px;">
+                🔄 Cambiar plato
+            </button>
+        </div>
+
+        <div id="chef-steps-container"></div>
+
         <h4 style="font-size: 14px; margin-bottom: 8px;">Ingredientes clave:</h4>
         <ul style="padding-left: 20px; font-size: 14px; line-height: 1.6; color: var(--text-main); margin-bottom: 16px;">
             ${ingList.map(i => `<li>${escapeHtml(i)}</li>`).join('')}
@@ -2896,18 +3017,81 @@ function openRecipeModal(dish) {
 
     openModal(html);
 
+    document.getElementById('btn-swap-recipe-dish')?.addEventListener('click', () => {
+        openSwapDishModal(dish);
+    });
+
+    document.getElementById('btn-chef-steps')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const container = document.getElementById('chef-steps-container');
+        if (!container) return;
+
+        btn.disabled = true;
+        btn.innerText = '👨‍🍳 Consultando con el Chef Gemini...';
+        container.innerHTML = `
+            <div style="text-align: center; padding: 16px; background: var(--card-secondary-bg); border-radius: 12px; margin-bottom: 14px;">
+                <p style="font-size: 13px; font-weight: 600; color: var(--primary); margin: 0;">Preparando receta y tiempos de cocción...</p>
+            </div>
+        `;
+
+        try {
+            const { data, error } = await supabase.functions.invoke('generate-menu', {
+                body: {
+                    action: 'recipe_steps',
+                    plato: dish.nombre,
+                    ingredientes: ingList
+                }
+            });
+
+            if (error) throw new Error(error.message || 'No se pudo contactar con Gemini.');
+            if (!data?.recipe) throw new Error('No se recibieron los pasos de la receta.');
+
+            const r = data.recipe;
+            btn.style.display = 'none';
+            container.innerHTML = `
+                <div class="chef-steps-box">
+                    <div class="chef-badge-row">
+                        <span class="chip" style="font-size: 11px;">⏱️ Cocción: ${escapeHtml(r.tiempo || '25 min')}</span>
+                        <span class="chip" style="font-size: 11px;">⚡ Dificultad: ${escapeHtml(r.dificultad || 'Media')}</span>
+                    </div>
+                    <h5 style="margin: 0 0 8px; font-size: 13px; font-weight: 700;">📋 Preparación paso a paso:</h5>
+                    <ol style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.55; color: var(--text-main);">
+                        ${Array.isArray(r.pasos) ? r.pasos.map(p => `<li style="margin-bottom: 6px;">${escapeHtml(p)}</li>`).join('') : ''}
+                    </ol>
+                    ${r.truco_chef ? `
+                        <div class="chef-tip-box">
+                            <span style="font-size: 18px;">💡</span>
+                            <div style="font-size: 12px; line-height: 1.45; color: var(--text-main);">
+                                <strong>Truco del Chef:</strong> ${escapeHtml(r.truco_chef)}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (err) {
+            console.error('Error al generar receta:', err);
+            btn.disabled = false;
+            btn.innerText = '👨‍🍳 Reintentar paso a paso con IA';
+            container.innerHTML = `
+                <p class="error-text" style="margin-bottom: 12px;">Error al obtener la receta: ${escapeHtml(err.message || 'Error de conexión.')}</p>
+            `;
+        }
+    });
+
     document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', () => {
         const state = getAppState();
         let added = 0;
         ingList.forEach(ing => {
             const exists = state.shopping.some(s => s.nombre.toLowerCase() === ing.toLowerCase() && !s.comprado);
             if (!exists) {
-                state.shopping.push({
+                const newItem = {
                     id: crypto.randomUUID(),
                     nombre: ing,
                     seccion: getAisleCategory(ing),
                     comprado: false
-                });
+                };
+                state.shopping.push(newItem);
+                persistShoppingItemToSupabase(newItem, 'upsert');
                 added++;
             }
         });
@@ -2916,6 +3100,424 @@ function openRecipeModal(dish) {
         closeModal();
     });
 }
+
+function openSwapDishModal(dish) {
+    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
+    const html = `
+        <div class="modal-header">
+            <h3>🔄 Cambiar plato con IA</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+            Plato actual: <strong>${escapeHtml(dish.nombre)}</strong> (${escapeHtml(dish.tipo)} del ${escapeHtml(dish.dia)}).
+        </p>
+        <div id="swap-status-box" style="text-align: center; padding: 24px 10px;">
+            <p style="font-weight: 700; color: var(--primary); margin-bottom: 4px;">Pensando 3 alternativas con Gemini...</p>
+            <p style="font-size: 12px; color: var(--text-muted);">Buscando opciones equilibradas para dieta ${escapeHtml(curDiet)}.</p>
+        </div>
+        <div id="swap-error-box" class="error-text hidden" style="margin-bottom: 12px;"></div>
+        <div id="swap-results-box" class="hidden"></div>
+    `;
+
+    openModal(html);
+
+    (async () => {
+        const statusBox = document.getElementById('swap-status-box');
+        const errorBox = document.getElementById('swap-error-box');
+        const resultsBox = document.getElementById('swap-results-box');
+
+        try {
+            const { data, error } = await supabase.functions.invoke('generate-menu', {
+                body: {
+                    action: 'swap_dish',
+                    dia: dish.dia,
+                    tipo: dish.tipo,
+                    dieta: curDiet,
+                    plato_actual: dish.nombre
+                }
+            });
+
+            if (error) throw new Error(error.message || 'No se pudo contactar con Gemini.');
+            if (!Array.isArray(data?.alternatives) || !data.alternatives.length) {
+                throw new Error('Gemini no devolvió alternativas válidas.');
+            }
+
+            statusBox?.classList.add('hidden');
+            resultsBox?.classList.remove('hidden');
+
+            resultsBox.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    ${data.alternatives.map((alt, idx) => `
+                        <div class="swap-alt-card">
+                            <div class="swap-alt-header">
+                                <strong>${escapeHtml(alt.nombre)}</strong>
+                                <span class="chip" style="font-size: 11px;">⏱️ ${escapeHtml(alt.tiempo || '25 min')}</span>
+                            </div>
+                            <div class="swap-alt-ings">
+                                🧂 ${escapeHtml(Array.isArray(alt.ingredientes) ? alt.ingredientes.join(', ') : '')}
+                            </div>
+                            <button type="button" class="btn-primary btn-select-alt" data-alt-idx="${idx}" style="width: 100%; padding: 8px 12px; font-size: 12px;">
+                                ✨ Elegir este plato
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            resultsBox.querySelectorAll('.btn-select-alt').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const chosen = data.alternatives[Number(btn.dataset.altIdx)];
+                    if (!chosen) return;
+                    const state = getAppState();
+                    state.menu = state.menu.map((m) => {
+                        if (m.id === dish.id || (m.dia === dish.dia && m.tipo === dish.tipo)) {
+                            return {
+                                ...m,
+                                nombre: chosen.nombre,
+                                tiempo: chosen.tiempo || '25 min',
+                                ingredientes: Array.isArray(chosen.ingredientes) ? chosen.ingredientes : []
+                            };
+                        }
+                        return m;
+                    });
+                    saveAppState(state);
+                    persistMenuToSupabase(state.menu);
+                    showToast(`✨ ¡Plato cambiado a "${chosen.nombre}"!`);
+                    closeModal();
+                    if (currentView === 'menus') renderMenuView();
+                    else if (currentView === 'dashboard') renderDashboard(viewRenderId);
+                });
+            });
+        } catch (err) {
+            console.error('Error al cambiar plato:', err);
+            statusBox?.classList.add('hidden');
+            if (errorBox) {
+                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar alternativas.'}`;
+                errorBox.classList.remove('hidden');
+            }
+        }
+    })();
+}
+
+function openFridgeModal() {
+    const commonStaples = [
+        '🥚 Huevos', '🥔 Patatas', '🧅 Cebolla', '🍅 Tomates', '🧀 Queso',
+        '🥦 Calabacín', '🍚 Arroz', '🍝 Pasta', '🐟 Atún en lata', '🍗 Pollo'
+    ];
+    const selectedChips = new Set(['🥚 Huevos', '🥔 Patatas']);
+
+    const html = `
+        <div class="modal-header">
+            <h3>🧊 ¿Qué cocino hoy? (Aprovechar nevera)</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+            Selecciona lo que tienes en la nevera o despensa y Gemini te propondrá recetas de aprovechamiento rápido:
+        </p>
+
+        <form id="form-fridge">
+            <label style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Ingredientes comunes (toca para marcar):</label>
+            <div class="fridge-chips-grid" id="fridge-chips-container">
+                ${commonStaples.map(s => `
+                    <button type="button" class="fridge-chip ${selectedChips.has(s) ? 'selected' : ''}" data-chip="${escapeHtml(s)}">
+                        ${escapeHtml(s)}
+                    </button>
+                `).join('')}
+            </div>
+
+            <label for="fridge-custom-ing">Otros ingredientes que tengas en casa:</label>
+            <input type="text" id="fridge-custom-ing" placeholder="Ej. Medio bote de nata, zanahorias, champiñones..." maxlength="200">
+
+            <div class="form-row-2" style="margin-top: 10px;">
+                <div>
+                    <label for="fridge-time-limit">Tiempo disponible:</label>
+                    <select id="fridge-time-limit" class="input-select">
+                        <option value="15 min">⚡ Rápido (15 min)</option>
+                        <option value="25 min" selected>⏱️ Normal (25 min)</option>
+                        <option value="40 min">🍲 Con calma (40 min)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="fridge-status-box" class="hidden" style="text-align: center; padding: 20px 10px;">
+                <p style="font-weight: 700; color: var(--primary); margin: 0 0 4px;">🍳 Diseñando recetas de aprovechamiento con Gemini...</p>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 0;">Combinando tus ingredientes para evitar desperdicio.</p>
+            </div>
+            <div id="fridge-error-box" class="error-text hidden" style="margin-bottom: 10px;"></div>
+
+            <div class="modal-footer" id="fridge-footer" style="margin-top: 14px;">
+                <button type="submit" class="btn-primary btn-ai">✨ Buscar recetas con IA</button>
+                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            </div>
+        </form>
+
+        <div id="fridge-results-container" class="hidden"></div>
+    `;
+
+    openModal(html);
+
+    const chipsContainer = document.getElementById('fridge-chips-container');
+    chipsContainer?.querySelectorAll('.fridge-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const val = btn.dataset.chip;
+            if (selectedChips.has(val)) {
+                selectedChips.delete(val);
+                btn.classList.remove('selected');
+            } else {
+                selectedChips.add(val);
+                btn.classList.add('selected');
+            }
+        });
+    });
+
+    document.getElementById('form-fridge')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const customIng = document.getElementById('fridge-custom-ing').value.trim();
+        const tiempoMax = document.getElementById('fridge-time-limit').value;
+        const statusBox = document.getElementById('fridge-status-box');
+        const errorBox = document.getElementById('fridge-error-box');
+        const footer = document.getElementById('fridge-footer');
+        const resultsContainer = document.getElementById('fridge-results-container');
+        const form = document.getElementById('form-fridge');
+
+        const allIngredients = Array.from(selectedChips).map(s => s.replace(/^[^\wáéíóúÁÉÍÓÚñÑ]+/, '').trim());
+        if (customIng) allIngredients.push(customIng);
+
+        if (!allIngredients.length) {
+            if (errorBox) {
+                errorBox.innerText = 'Selecciona al menos un ingrediente o escribe qué tienes en la nevera.';
+                errorBox.classList.remove('hidden');
+            }
+            return;
+        }
+
+        if (errorBox) errorBox.classList.add('hidden');
+        if (statusBox) statusBox.classList.remove('hidden');
+        if (footer) footer.classList.add('hidden');
+
+        try {
+            const { data, error } = await supabase.functions.invoke('generate-menu', {
+                body: {
+                    action: 'fridge_recipes',
+                    ingredientes: allIngredients.join(', '),
+                    tiempo_max: tiempoMax
+                }
+            });
+
+            if (error) throw new Error(error.message || 'No se pudo conectar con Gemini.');
+            if (!Array.isArray(data?.recipes) || !data.recipes.length) {
+                throw new Error('Gemini no pudo encontrar recetas con esos ingredientes.');
+            }
+
+            statusBox?.classList.add('hidden');
+            form?.classList.add('hidden');
+            resultsContainer?.classList.remove('hidden');
+
+            const todayName = getTodayWeekDayName();
+
+            resultsContainer.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h4 style="margin: 0; font-size: 15px;">🍳 ${data.recipes.length} Recetas sugeridas:</h4>
+                    <button type="button" id="btn-fridge-retry" class="text-button" style="font-size: 12px;">← Buscar otras</button>
+                </div>
+                <div class="fridge-recipes-results">
+                    ${data.recipes.map((r, i) => `
+                        <div class="fridge-recipe-card">
+                            <div class="fridge-recipe-header">
+                                <h4>🍲 ${escapeHtml(r.nombre)}</h4>
+                                <span class="chip" style="font-size: 11px;">⏱️ ${escapeHtml(r.tiempo || '20 min')}</span>
+                            </div>
+                            <p class="fridge-recipe-desc">${escapeHtml(r.descripcion || '')}</p>
+                            <div style="font-size: 12px; margin-bottom: 6px;">
+                                <strong>Aprovecha:</strong> ${escapeHtml(Array.isArray(r.ingredientes_usados) ? r.ingredientes_usados.join(', ') : '')}
+                            </div>
+                            ${r.ingredientes_extra?.length ? `
+                                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
+                                    <strong>Básicos extra:</strong> ${escapeHtml(r.ingredientes_extra.join(', '))}
+                                </div>
+                            ` : ''}
+                            <ol class="fridge-steps-list">
+                                ${Array.isArray(r.pasos) ? r.pasos.map(p => `<li>${escapeHtml(p)}</li>`).join('') : ''}
+                            </ol>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button type="button" class="btn-primary btn-assign-fridge" data-fridge-idx="${i}" data-assign-type="Comida" style="flex: 1; padding: 8px 10px; font-size: 12px;">
+                                    ☀️ Poner en Comida de hoy (${escapeHtml(todayName)})
+                                </button>
+                                <button type="button" class="btn-secondary btn-assign-fridge" data-fridge-idx="${i}" data-assign-type="Cena" style="flex: 1; padding: 8px 10px; font-size: 12px;">
+                                    🌙 Poner en Cena de hoy (${escapeHtml(todayName)})
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            document.getElementById('btn-fridge-retry')?.addEventListener('click', () => {
+                resultsContainer?.classList.add('hidden');
+                form?.classList.remove('hidden');
+                footer?.classList.remove('hidden');
+            });
+
+            resultsContainer.querySelectorAll('.btn-assign-fridge').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const r = data.recipes[Number(btn.dataset.fridgeIdx)];
+                    const tipo = btn.dataset.assignType;
+                    if (!r) return;
+
+                    const state = getAppState();
+                    const existingIdx = state.menu.findIndex(m => m.dia === todayName && m.tipo === tipo);
+                    const newMeal = {
+                        id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
+                        dia: todayName,
+                        tipo,
+                        nombre: r.nombre,
+                        tiempo: r.tiempo || '25 min',
+                        ingredientes: Array.isArray(r.ingredientes_usados) ? [...r.ingredientes_usados, ...(r.ingredientes_extra || [])] : []
+                    };
+
+                    if (existingIdx >= 0) {
+                        state.menu[existingIdx] = newMeal;
+                    } else {
+                        state.menu.push(newMeal);
+                    }
+
+                    saveAppState(state);
+                    persistMenuToSupabase(state.menu);
+                    showToast(`🍽️ "${r.nombre}" asignado a la ${tipo.toLowerCase()} de hoy!`);
+                    closeModal();
+                    if (currentView === 'dashboard') renderDashboard(viewRenderId);
+                    else if (currentView === 'menus') renderMenuView();
+                });
+            });
+
+        } catch (err) {
+            console.error('Error al generar recetas de aprovechamiento:', err);
+            if (statusBox) statusBox.classList.add('hidden');
+            if (footer) footer.classList.remove('hidden');
+            if (errorBox) {
+                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar recetas.'}`;
+                errorBox.classList.remove('hidden');
+            }
+        }
+    });
+}
+
+let supermarketWakeLock = null;
+
+async function openSupermarketMode() {
+    if ('wakeLock' in navigator) {
+        try {
+            supermarketWakeLock = await navigator.wakeLock.request('screen');
+        } catch (e) {
+            console.warn('Wake Lock no disponible:', e);
+        }
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'supermarket-overlay';
+    overlay.id = 'supermarket-modal';
+
+    function renderSupermarketContent() {
+        const state = getAppState();
+        const pendingItems = state.shopping.filter(i => !i.comprado);
+        const completedItems = state.shopping.filter(i => i.comprado);
+        const total = state.shopping.length;
+        const percent = total > 0 ? Math.round((completedItems.length / total) * 100) : 100;
+
+        const aislesMap = new Map();
+        AISLE_ORDER.forEach(a => aislesMap.set(a, []));
+        pendingItems.forEach(item => {
+            const sec = item.seccion || getAisleCategory(item.nombre);
+            if (!aislesMap.has(sec)) aislesMap.set(sec, []);
+            aislesMap.get(sec).push(item);
+        });
+
+        let aislesHtml = '';
+        aislesMap.forEach((items, aisle) => {
+            if (!items.length) return;
+            aislesHtml += `
+                <div class="supermarket-aisle-block">
+                    <div class="supermarket-aisle-title">
+                        <span>${AISLE_ICONS[aisle] || '📦'} ${escapeHtml(aisle)}</span>
+                        <span>${items.length} pendientes</span>
+                    </div>
+                    ${items.map(it => `
+                        <div class="supermarket-item-card" data-sm-toggle="${escapeHtml(it.id)}">
+                            <div class="supermarket-checkbox">✓</div>
+                            <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
+                            ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        });
+
+        overlay.innerHTML = `
+            <div class="supermarket-header">
+                <div class="supermarket-header-top">
+                    <div class="supermarket-title-box">
+                        <h3>🛒 Supermercado</h3>
+                        ${supermarketWakeLock ? `<span class="supermarket-wakelock-pill">🟢 Pantalla encendida</span>` : ''}
+                    </div>
+                    <button type="button" class="btn-exit-supermarket" id="btn-close-sm">✕ Salir</button>
+                </div>
+                <div class="supermarket-progress-box">
+                    <div class="supermarket-progress-label">
+                        <span>Progreso del carrito</span>
+                        <span>${completedItems.length} de ${total} (${percent}%)</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" style="width: ${percent}%;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="supermarket-body">
+                ${aislesHtml || '<div class="supermarket-empty-state"><p style="font-size: 28px;">🎉</p><h4>¡Carrito completo!</h4><p style="color: var(--text-muted); font-size: 14px;">No quedan productos pendientes por comprar.</p></div>'}
+
+                ${completedItems.length ? `
+                    <div class="supermarket-completed-section">
+                        <div class="supermarket-aisle-title">
+                            <span>✅ Ya en el carrito (${completedItems.length})</span>
+                        </div>
+                        ${completedItems.map(it => `
+                            <div class="supermarket-item-card done" data-sm-toggle="${escapeHtml(it.id)}">
+                                <div class="supermarket-checkbox">✓</div>
+                                <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
+                                ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+
+        overlay.querySelector('#btn-close-sm')?.addEventListener('click', () => {
+            if (supermarketWakeLock) {
+                try { supermarketWakeLock.release(); } catch {}
+                supermarketWakeLock = null;
+            }
+            overlay.remove();
+            renderCompraView();
+        });
+
+        overlay.querySelectorAll('[data-sm-toggle]').forEach(card => {
+            card.addEventListener('click', () => {
+                const id = card.dataset.smToggle;
+                const curState = getAppState();
+                const item = curState.shopping.find(i => i.id === id);
+                if (!item) return;
+                item.comprado = !item.comprado;
+                saveAppState(curState);
+                persistShoppingItemToSupabase(item, 'update');
+                renderSupermarketContent();
+            });
+        });
+    }
+
+    renderSupermarketContent();
+    document.body.appendChild(overlay);
+}
+
 
 function openPantryReviewModal() {
     const state = getAppState();
@@ -3030,6 +3632,7 @@ function openPantryReviewModal() {
                 const exists = curState.shopping.some(s => s.nombre.toLowerCase() === newIt.nombre.toLowerCase() && !s.comprado);
                 if (!exists) {
                     curState.shopping.push(newIt);
+                    persistShoppingItemToSupabase(newIt, 'upsert');
                 }
             });
             saveAppState(curState);
@@ -3155,6 +3758,7 @@ function openAIGeneratorModal() {
                 ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
             }));
             saveAppState(state);
+            persistMenuToSupabase(state.menu);
 
             showToast('¡Menú semanal creado con éxito!');
             closeModal();
@@ -3218,7 +3822,8 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
                             <div class="meal-slot-item">
                                 <span style="cursor: pointer;" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta e ingredientes">${escapeHtml(item.nombre)}</span>
                                 <div style="display: flex; gap: 4px; align-items: center;">
-                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta">🔍</button>
+                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta y cómo se cocina con IA">👨‍🍳</button>
+                                    <button class="text-button btn-delete-sm" data-swap-menu="${escapeHtml(item.id)}" title="Cambiar este plato con IA">🔄</button>
                                     <button class="text-button btn-delete-sm" data-delete-menu="${escapeHtml(item.id)}" aria-label="Eliminar plato" title="Eliminar plato">✕</button>
                                 </div>
                             </div>
@@ -3230,7 +3835,8 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
                             <div class="meal-slot-item">
                                 <span style="cursor: pointer;" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta e ingredientes">${escapeHtml(item.nombre)}</span>
                                 <div style="display: flex; gap: 4px; align-items: center;">
-                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta">🔍</button>
+                                    <button class="text-button btn-delete-sm" data-view-recipe="${escapeHtml(item.id)}" title="Ver receta y cómo se cocina con IA">👨‍🍳</button>
+                                    <button class="text-button btn-delete-sm" data-swap-menu="${escapeHtml(item.id)}" title="Cambiar este plato con IA">🔄</button>
                                     <button class="text-button btn-delete-sm" data-delete-menu="${escapeHtml(item.id)}" aria-label="Eliminar plato" title="Eliminar plato">✕</button>
                                 </div>
                             </div>
@@ -3274,11 +3880,17 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
 
         <!-- Barra de herramientas inteligentes -->
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
-            <button type="button" id="btn-open-ai-menu" class="btn-primary btn-ai" style="flex: 1; padding: 10px 14px; font-size: 13px;">
-                ✨ Generar menú con IA
+            <button type="button" id="btn-open-ai-menu" class="btn-primary btn-ai" style="flex: 1; min-width: 130px; padding: 10px 14px; font-size: 13px;">
+                ✨ Menú con IA
             </button>
-            <button type="button" id="btn-open-pantry-review" class="btn-secondary" style="flex: 1; padding: 10px 14px; font-size: 13px;">
-                🛒 Revisar despensa y comprar
+            <button type="button" id="btn-open-fridge" class="btn-secondary" style="flex: 1; min-width: 130px; padding: 10px 14px; font-size: 13px;">
+                🧊 ¿Qué cocino hoy?
+            </button>
+            <button type="button" id="btn-open-pantry-review" class="btn-secondary" style="padding: 10px 14px; font-size: 13px;">
+                🛒 Despensa
+            </button>
+            <button type="button" id="btn-print-menu" class="btn-secondary" style="padding: 10px 14px; font-size: 13px;" title="Imprimir menú para la nevera">
+                🖨️ Imprimir
             </button>
             <button type="button" id="btn-share-menu-wa" class="btn-secondary btn-whatsapp" style="padding: 10px 14px; font-size: 13px;">
                 💬 WhatsApp
@@ -3345,7 +3957,9 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
     });
 
     document.getElementById('btn-open-ai-menu')?.addEventListener('click', openAIGeneratorModal);
+    document.getElementById('btn-open-fridge')?.addEventListener('click', openFridgeModal);
     document.getElementById('btn-open-pantry-review')?.addEventListener('click', openPantryReviewModal);
+    document.getElementById('btn-print-menu')?.addEventListener('click', () => window.print());
     document.getElementById('btn-share-menu-wa')?.addEventListener('click', shareMenuWhatsApp);
 
     document.getElementById('btn-agregar-menu').addEventListener('click', () => {
@@ -3374,8 +3988,15 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
         }
 
         const state = getAppState();
-        state.menu.push({ id: crypto.randomUUID(), nombre, dia, tipo, tiempo, ingredientes });
+        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
+        const newMeal = { id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(), nombre, dia, tipo, tiempo, ingredientes };
+        if (existingIdx >= 0) {
+            state.menu[existingIdx] = newMeal;
+        } else {
+            state.menu.push(newMeal);
+        }
         if (!saveAppState(state)) return;
+        persistMenuToSupabase(state.menu);
         document.getElementById('menu-form').reset();
         showToast('Plato guardado');
         renderMenuView();
@@ -3388,11 +4009,28 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
         });
     });
 
+    mainContent.querySelectorAll('[data-swap-menu]').forEach((button) => {
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dish = state.menu.find(m => m.id === button.dataset.swapMenu);
+            if (dish) openSwapDishModal(dish);
+        });
+    });
+
     mainContent.querySelectorAll('[data-delete-menu]').forEach((button) => {
         button.addEventListener('click', () => {
             const state = getAppState();
+            const deletedDish = state.menu.find((item) => item.id === button.dataset.deleteMenu);
             state.menu = state.menu.filter((item) => item.id !== button.dataset.deleteMenu);
             if (!saveAppState(state)) return;
+            if (deletedDish && currentProfile?.familia_id) {
+                supabase.from('familias_menus')
+                    .delete()
+                    .eq('familia_id', currentProfile.familia_id)
+                    .eq('dia', deletedDish.dia)
+                    .eq('tipo', deletedDish.tipo)
+                    .then();
+            }
             renderMenuView();
         });
     });
@@ -3495,12 +4133,15 @@ function renderCompraView() {
             ` : ''}
         </div>
 
-        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-            <button type="button" id="btn-share-shop-wa" class="btn-primary btn-whatsapp" style="flex: 1; padding: 10px 14px; font-size: 13px;">
-                💬 Compartir por WhatsApp
+        <div style="display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;">
+            <button type="button" id="btn-open-supermarket" class="btn-primary" style="flex: 1; min-width: 130px; padding: 10px 14px; font-size: 13px;">
+                🛒 Modo Supermercado
             </button>
-            <button type="button" id="btn-compra-review-pantry" class="btn-secondary" style="flex: 1; padding: 10px 14px; font-size: 13px;">
-                🛒 Traer del Menú
+            <button type="button" id="btn-share-shop-wa" class="btn-primary btn-whatsapp" style="flex: 1; min-width: 110px; padding: 10px 14px; font-size: 13px;">
+                💬 WhatsApp
+            </button>
+            <button type="button" id="btn-compra-review-pantry" class="btn-secondary" style="flex: 1; min-width: 110px; padding: 10px 14px; font-size: 13px;">
+                📋 Traer del Menú
             </button>
         </div>
 
@@ -3552,6 +4193,7 @@ function renderCompraView() {
     `;
     addBackupControls(mainContent);
 
+    document.getElementById('btn-open-supermarket')?.addEventListener('click', openSupermarketMode);
     document.getElementById('btn-share-shop-wa')?.addEventListener('click', shareShoppingWhatsApp);
     document.getElementById('btn-compra-review-pantry')?.addEventListener('click', openPantryReviewModal);
 
@@ -3585,8 +4227,10 @@ function renderCompraView() {
             document.getElementById('nueva-compra').reportValidity();
             return;
         }
-        state.shopping.push({ id: crypto.randomUUID(), nombre, cantidad, seccion, comprado: false });
+        const newItem = { id: crypto.randomUUID(), nombre, cantidad, seccion, comprado: false };
+        state.shopping.push(newItem);
         if (!saveAppState(state)) return;
+        persistShoppingItemToSupabase(newItem, 'upsert');
         renderCompraView();
     });
 
@@ -3595,27 +4239,45 @@ function renderCompraView() {
     mainContent.querySelectorAll('[data-toggle-shopping]').forEach((input) => {
         input.addEventListener('change', () => {
             const state = getAppState();
-            state.shopping = state.shopping.map((item) => item.id === input.dataset.toggleShopping
-                ? { ...item, comprado: input.checked }
-                : item);
+            let updatedItem = null;
+            state.shopping = state.shopping.map((item) => {
+                if (item.id === input.dataset.toggleShopping) {
+                    updatedItem = { ...item, comprado: input.checked };
+                    return updatedItem;
+                }
+                return item;
+            });
             if (!saveAppState(state)) return;
+            if (updatedItem) {
+                persistShoppingItemToSupabase(updatedItem, 'update');
+            }
             renderCompraView();
         });
     });
 
     mainContent.querySelectorAll('[data-delete-shopping]').forEach((button) => {
         button.addEventListener('click', () => {
+            const id = button.dataset.deleteShopping;
             const state = getAppState();
-            state.shopping = state.shopping.filter((item) => item.id !== button.dataset.deleteShopping);
+            state.shopping = state.shopping.filter((item) => item.id !== id);
             if (!saveAppState(state)) return;
+            persistShoppingItemToSupabase({ id }, 'delete');
             renderCompraView();
         });
     });
 
-    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', () => {
+    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', async () => {
         const state = getAppState();
+        const removedIds = state.shopping.filter((item) => item.comprado).map((item) => item.id);
         state.shopping = state.shopping.filter((item) => !item.comprado);
         if (!saveAppState(state)) return;
+        if (currentProfile?.familia_id && removedIds.length > 0) {
+            try {
+                await supabase.from('familias_compras').delete().in('id', removedIds);
+            } catch (err) {
+                console.warn('Error borrando comprados en Supabase:', err);
+            }
+        }
         renderCompraView();
     });
 }

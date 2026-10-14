@@ -2174,6 +2174,146 @@ input:focus,
     margin-bottom: 6px;
 }
 
+/* ==========================================================================
+   RECETA PASO A PASO Y CAMBIO DE PLATO CON IA
+   ========================================================================== */
+.chef-steps-box {
+    margin-top: 14px;
+    background: var(--card-secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px;
+}
 
+.chef-badge-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
 
+.chef-tip-box {
+    margin-top: 14px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
 
+.swap-alt-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.swap-alt-card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+
+.swap-alt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.swap-alt-header strong {
+    font-size: 15px;
+    color: var(--text-main);
+}
+
+.swap-alt-ings {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.4;
+}
+
+/* ==========================================================================
+   ESTILOS DE IMPRESIÓN PARA LA NEVERA (@media print)
+   ========================================================================== */
+@media print {
+    body {
+        background: #ffffff !important;
+        color: #111827 !important;
+        font-family: system-ui, -apple-system, sans-serif !important;
+        font-size: 10pt !important;
+    }
+
+    .bottom-nav,
+    .fab-container,
+    .modal-overlay,
+    .toast-container,
+    .day-carousel-container,
+    .section-header button,
+    .dashboard-header button,
+    .header-actions,
+    .btn-primary,
+    .btn-secondary,
+    .btn-whatsapp,
+    .btn-ai,
+    .notif-quick-banner,
+    .supermarket-overlay,
+    .backup-section,
+    .alert-banner,
+    .stat-card,
+    .daily-progress-card,
+    #menu-form,
+    #shop-form,
+    .text-button {
+        display: none !important;
+    }
+
+    .header-content {
+        padding: 0 0 10px 0 !important;
+        border-bottom: 2px solid #111827 !important;
+        margin-bottom: 14px !important;
+    }
+
+    .main-content {
+        padding: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .weekly-days-list {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 10px !important;
+    }
+
+    .weekly-day-card {
+        border: 1px solid #9ca3af !important;
+        border-radius: 6px !important;
+        padding: 8px !important;
+        page-break-inside: avoid !important;
+        background: #ffffff !important;
+        color: #111827 !important;
+        box-shadow: none !important;
+    }
+
+    .weekly-day-header strong {
+        color: #111827 !important;
+        font-size: 12pt !important;
+    }
+
+    .meal-slot-item {
+        background: #f9fafb !important;
+        border: 1px solid #e5e7eb !important;
+        color: #111827 !important;
+        padding: 6px 8px !important;
+        margin-bottom: 4px !important;
+    }
+
+    .meal-badge {
+        background: #f3f4f6 !important;
+        color: #111827 !important;
+        border: 1px solid #d1d5db !important;
+    }
+}
