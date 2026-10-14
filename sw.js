@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v8';
+const CACHE_NAME = 'tribuapp-v9';
 const PRECACHE_URLS = [
   './',
   './index.html',

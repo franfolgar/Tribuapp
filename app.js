@@ -2261,7 +2261,7 @@ async function fetchFamilyData() {
         supabase.from('familias').select('id, nombre, dieta_base').eq('id', currentProfile.familia_id).single(),
         supabase.from('usuarios').select('id, nombre, rol').eq('familia_id', currentProfile.familia_id),
         supabase.from('tareas_asignadas')
-            .select('id, fecha_objetivo, estado, asignado_a, tareas_catalogo(nombre)')
+            .select('id, tarea_id, fecha_objetivo, estado, asignado_a, recurrencia, tareas_catalogo(nombre)')
             .eq('familia_id', currentProfile.familia_id)
             .order('fecha_objetivo', { ascending: true }),
     ]);
@@ -2272,6 +2272,7 @@ async function fetchFamilyData() {
     let tasks = [];
     if (!tasksResult.error && Array.isArray(tasksResult.data)) {
         tasks = tasksResult.data;
+        saveToStorage(STORAGE_KEYS.tasks, tasks);
     } else {
         const storedTasks = readFromStorage(STORAGE_KEYS.tasks, null);
         if (storedTasks && Array.isArray(storedTasks)) {
@@ -2722,38 +2723,52 @@ async function renderDashboard(renderId) {
 // --- TAREAS VIEW (Filtros, Recurrencia y Progreso Visual) ---
 
 async function completarTarea(taskId) {
-    let task = null;
     const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    task = storedTasks.find(t => t.id === taskId);
+    const task = storedTasks.find(t => t.id === taskId);
 
+    // 1. Actualización optimista local
+    const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
+    saveToStorage(STORAGE_KEYS.tasks, updated);
+
+    // 2. Persistir en Supabase
     try {
-        const { data, error } = await supabase.from('tareas_asignadas')
+        const { error } = await supabase.from('tareas_asignadas')
             .update({ estado: 'Completada' })
-            .eq('id', taskId)
-            .eq('familia_id', currentProfile.familia_id)
-            .select('id')
-            .maybeSingle();
+            .eq('id', taskId);
 
-        if (error || !data) {
-            const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
-            saveToStorage(STORAGE_KEYS.tasks, updated);
+        if (error) {
+            console.error('Error al completar tarea en Supabase:', error);
+            showToast(`Aviso: ${error.message || 'No se pudo guardar en la nube'}`);
         }
-    } catch {
-        const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
-        saveToStorage(STORAGE_KEYS.tasks, updated);
+    } catch (err) {
+        console.error('Excepción al completar tarea:', err);
     }
 
     showToast('¡Tarea completada!');
 
-    // Recurrencia: programar próxima aparición automática si es periódica
+    // 3. Recurrencia: programar próxima aparición automática si es periódica
     if (task && task.recurrencia && task.recurrencia !== 'Puntual') {
         const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
         if (nextDate) {
+            if (currentProfile?.familia_id && task.tarea_id) {
+                try {
+                    await supabase.from('tareas_asignadas').insert({
+                        familia_id: currentProfile.familia_id,
+                        tarea_id: task.tarea_id,
+                        asignado_a: task.asignado_a || null,
+                        fecha_objetivo: nextDate,
+                        recurrencia: task.recurrencia,
+                        estado: 'Pendiente'
+                    });
+                } catch (recErr) {
+                    console.warn('Error programando tarea recurrente en Supabase:', recErr);
+                }
+            }
             const recurringTask = {
                 id: crypto.randomUUID(),
                 fecha_objetivo: nextDate,
                 estado: 'Pendiente',
-                asignado_a: task.asignado_a,
+                asignado_a: task.asignado_a || null,
                 recurrencia: task.recurrencia,
                 tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
             };
