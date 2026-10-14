@@ -845,7 +845,11 @@ async function openQuickAddTaskModal() {
         try {
             const { data: catData, error: catError } = await supabase
                 .from('tareas_catalogo')
-                .insert({ nombre, recurrencia_sugerida: recurrencia })
+                .insert({
+                    familia_id: currentProfile?.familia_id || null,
+                    nombre,
+                    recurrencia_sugerida: recurrencia
+                })
                 .select('id')
                 .single();
 
@@ -2274,13 +2278,8 @@ async function fetchFamilyData() {
         tasks = tasksResult.data;
         saveToStorage(STORAGE_KEYS.tasks, tasks);
     } else {
-        const storedTasks = readFromStorage(STORAGE_KEYS.tasks, null);
-        if (storedTasks && Array.isArray(storedTasks)) {
-            tasks = storedTasks;
-        } else {
-            tasks = getSampleTasks(currentProfile.familia_id, currentProfile.id);
-            saveToStorage(STORAGE_KEYS.tasks, tasks);
-        }
+        const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
+        tasks = Array.isArray(storedTasks) ? storedTasks.filter(t => !String(t.id).startsWith('demo-')) : [];
     }
 
     return {
@@ -2723,36 +2722,40 @@ async function renderDashboard(renderId) {
 // --- TAREAS VIEW (Filtros, Recurrencia y Progreso Visual) ---
 
 async function completarTarea(taskId) {
+    const isDemo = String(taskId).startsWith('demo-');
     const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    const task = storedTasks.find(t => t.id === taskId);
+    const task = storedTasks.find(t => String(t.id) === String(taskId));
 
     // 1. Actualización optimista local
-    const updated = storedTasks.map((t) => t.id === taskId ? { ...t, estado: 'Completada' } : t);
+    const updated = storedTasks.map((t) => String(t.id) === String(taskId) ? { ...t, estado: 'Completada' } : t);
     saveToStorage(STORAGE_KEYS.tasks, updated);
 
-    // 2. Persistir en Supabase
-    try {
-        const { error } = await supabase.from('tareas_asignadas')
-            .update({ estado: 'Completada' })
-            .eq('id', taskId);
+    // 2. Persistir en Supabase solo si es tarea real (no demo)
+    if (!isDemo) {
+        try {
+            const { error } = await supabase.from('tareas_asignadas')
+                .update({ estado: 'Completada' })
+                .eq('id', taskId);
 
-        if (error) {
-            console.error('Error al completar tarea en Supabase:', error);
-            showToast(`Aviso: ${error.message || 'No se pudo guardar en la nube'}`);
+            if (error) {
+                console.error('Error al completar tarea en Supabase:', error);
+                showToast(`Aviso: ${error.message || 'No se pudo guardar en la nube'}`);
+            }
+        } catch (err) {
+            console.error('Excepción al completar tarea:', err);
         }
-    } catch (err) {
-        console.error('Excepción al completar tarea:', err);
     }
 
     showToast('¡Tarea completada!');
 
-    // 3. Recurrencia: programar próxima aparición automática si es periódica
-    if (task && task.recurrencia && task.recurrencia !== 'Puntual') {
+    // 3. Recurrencia: programar próxima aparición automática si es periódica (solo tareas reales de la tribu)
+    if (!isDemo && task && task.recurrencia && task.recurrencia !== 'Puntual') {
         const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
         if (nextDate) {
+            let insertedInCloud = false;
             if (currentProfile?.familia_id && task.tarea_id) {
                 try {
-                    await supabase.from('tareas_asignadas').insert({
+                    const { error: recErr } = await supabase.from('tareas_asignadas').insert({
                         familia_id: currentProfile.familia_id,
                         tarea_id: task.tarea_id,
                         asignado_a: task.asignado_a || null,
@@ -2760,24 +2763,51 @@ async function completarTarea(taskId) {
                         recurrencia: task.recurrencia,
                         estado: 'Pendiente'
                     });
+                    if (!recErr) insertedInCloud = true;
                 } catch (recErr) {
                     console.warn('Error programando tarea recurrente en Supabase:', recErr);
                 }
             }
-            const recurringTask = {
-                id: crypto.randomUUID(),
-                fecha_objetivo: nextDate,
-                estado: 'Pendiente',
-                asignado_a: task.asignado_a || null,
-                recurrencia: task.recurrencia,
-                tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
-            };
-            const currentList = readFromStorage(STORAGE_KEYS.tasks, []);
-            currentList.push(recurringTask);
-            saveToStorage(STORAGE_KEYS.tasks, currentList);
+            if (!insertedInCloud) {
+                const recurringTask = {
+                    id: crypto.randomUUID(),
+                    tarea_id: task.tarea_id || null,
+                    fecha_objetivo: nextDate,
+                    estado: 'Pendiente',
+                    asignado_a: task.asignado_a || null,
+                    recurrencia: task.recurrencia,
+                    tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
+                };
+                const currentList = readFromStorage(STORAGE_KEYS.tasks, []);
+                currentList.push(recurringTask);
+                saveToStorage(STORAGE_KEYS.tasks, currentList);
+            }
         }
     }
 
+    await renderizarVista(currentView);
+}
+
+async function eliminarTarea(taskId) {
+    const isDemo = String(taskId).startsWith('demo-');
+    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
+    const updated = storedTasks.filter((t) => String(t.id) !== String(taskId));
+    saveToStorage(STORAGE_KEYS.tasks, updated);
+
+    if (!isDemo) {
+        try {
+            const { error } = await supabase.from('tareas_asignadas')
+                .delete()
+                .eq('id', taskId);
+            if (error) {
+                console.error('Error al eliminar tarea en Supabase:', error);
+            }
+        } catch (err) {
+            console.error('Excepción al eliminar tarea:', err);
+        }
+    }
+
+    showToast('Tarea eliminada');
     await renderizarVista(currentView);
 }
 
@@ -2889,7 +2919,7 @@ async function cargarVistaTareas(renderId) {
 
             return `
                 <div class="task-card ${completed ? 'completed' : ''}">
-                    <div>
+                    <div style="flex: 1;">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
                             ${isOverdue ? '<span class="badge-overdue">Atrasada</span>' : ''}
@@ -2900,9 +2930,12 @@ async function cargarVistaTareas(renderId) {
                             ${task.recurrencia && task.recurrencia !== 'Puntual' ? `<span class="recurrence-badge">🔄 ${escapeHtml(task.recurrencia)}</span>` : ''}
                         </div>
                     </div>
-                    ${completed
-                        ? '<span aria-label="Completada" style="color: var(--success); font-weight: bold; font-size: 18px;">✓</span>'
-                        : `<button data-complete-task="${escapeHtml(task.id)}" class="btn-primary btn-icon-square" aria-label="Completar tarea">✓</button>`}
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        ${completed
+                            ? '<span aria-label="Completada" style="color: var(--success); font-weight: bold; font-size: 18px;">✓</span>'
+                            : `<button data-complete-task="${escapeHtml(task.id)}" class="btn-primary btn-icon-square" aria-label="Completar tarea" title="Marcar como completada">✓</button>`}
+                        <button data-delete-task="${escapeHtml(task.id)}" class="btn-icon-square" style="background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); font-size: 14px; cursor: pointer;" aria-label="Eliminar tarea" title="Eliminar tarea">🗑️</button>
+                    </div>
                 </div>
             `;
         }).join('');
@@ -2936,6 +2969,15 @@ async function cargarVistaTareas(renderId) {
         });
     });
 
+    lista.querySelectorAll('[data-delete-task]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            if (confirm('¿Quieres eliminar esta tarea?')) {
+                button.disabled = true;
+                await eliminarTarea(button.dataset.deleteTask);
+            }
+        });
+    });
+
     document.getElementById('form-nueva-tarea').addEventListener('submit', async (event) => {
         event.preventDefault();
         const button = document.getElementById('btn-guardar-tarea');
@@ -2953,7 +2995,11 @@ async function cargarVistaTareas(renderId) {
         button.innerText = 'Guardando...';
         try {
             const { data: catalog, error: catalogError } = await supabase.from('tareas_catalogo')
-                .insert({ familia_id: currentProfile.familia_id, nombre })
+                .insert({
+                    familia_id: currentProfile.familia_id,
+                    nombre,
+                    recurrencia_sugerida: recurrencia
+                })
                 .select('id')
                 .single();
             if (catalogError) throw catalogError;
@@ -2964,6 +3010,8 @@ async function cargarVistaTareas(renderId) {
                     tarea_id: catalog.id,
                     asignado_a: asignadoA,
                     fecha_objetivo: fecha,
+                    recurrencia: recurrencia,
+                    estado: 'Pendiente'
                 })
                 .select('id')
                 .single();
@@ -2977,7 +3025,6 @@ async function cargarVistaTareas(renderId) {
                 estado: 'Pendiente',
                 asignado_a: asignadoA,
                 recurrencia,
-                puntos,
                 tareas_catalogo: { nombre },
             });
             saveToStorage(STORAGE_KEYS.tasks, storedTasks);
