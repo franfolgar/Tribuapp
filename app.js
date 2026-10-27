@@ -258,7 +258,7 @@ const toastContainer = document.getElementById('toast-container');
 
 let currentUser = null;
 let currentProfile = null;
-let authMode = 'login';
+let authMode = (typeof getPendingInvite === 'function' && getPendingInvite()) ? 'invite_join' : 'login';
 let currentView = 'dashboard';
 let viewRenderId = 0;
 let currentTaskFilter = 'all'; // 'all' | 'today' | 'mine' | 'pool'
@@ -1956,11 +1956,20 @@ authForm.addEventListener('submit', async (event) => {
             const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
             if (!signUpError && signUpData.user) {
                 if (!signUpData.session) {
+                    try {
+                        const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+                        if (!signErr && signData?.session && signData?.user) {
+                            authUser = signData.user;
+                        }
+                    } catch {}
+                } else {
+                    authUser = signUpData.user;
+                }
+                if (!authUser) {
                     updateAuthMode('login');
-                    showAuthMessage('Cuenta creada. Confirma tu correo y luego inicia sesión para aceptar la invitación.');
+                    showAuthMessage('Cuenta creada. Confirma tu correo o inicia sesión para unirte a la tribu.');
                     return;
                 }
-                authUser = signUpData.user;
             } else if (signUpError) {
                 const msg = (signUpError.message || '').toLowerCase();
                 // Si el correo ya estaba registrado previamente, intentar inicio de sesión con esa contraseña
@@ -2412,7 +2421,7 @@ async function openInviteModal(family, inviteToken = null) {
     }
 
     const publicUrl = getPublicAppUrl();
-    const directJoinLink = `${publicUrl}?invite=${encodeURIComponent(inviteToken)}&tribu=${encodeURIComponent(family.nombre || 'Mi Hogar')}`;
+    const directJoinLink = `${publicUrl.replace(/\/$/, '')}/?invite=${encodeURIComponent(inviteToken)}&tribu=${encodeURIComponent(family.nombre || 'Mi Hogar')}`;
     const customDeployUrl = localStorage.getItem('tribuapp_custom_deploy_url') || '';
 
     const html = `
@@ -2497,7 +2506,7 @@ async function openInviteModal(family, inviteToken = null) {
 
     document.getElementById('btn-invite-wa')?.addEventListener('click', () => {
         const text = `⛺ ¡Hola! Te invito a unirte a nuestra tribu familiar *${family?.nombre || 'Familia'}* en Tribuapp.\n\n👉 Entra directamente aquí para unirte a la familia (enlace válido 7 días):\n${directJoinLink}`;
-        window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+        window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
     });
 }
 
@@ -3144,7 +3153,7 @@ async function cargarVistaTareas(renderId) {
     document.getElementById('form-nueva-tarea').addEventListener('submit', async (event) => {
         event.preventDefault();
         const button = document.getElementById('btn-guardar-tarea');
-        const nombre = document.getElementById('nueva-tarea-nombre').value.trim();
+        const nombre = document.getElementById('nueva-tarea-nombre').value.trim().slice(0, 120);
         const asignadoA = document.getElementById('nueva-tarea-asignado').value || null;
         const fecha = document.getElementById('nueva-tarea-fecha').value || getLocalDateInputValue();
         const recurrencia = document.getElementById('nueva-tarea-recurrencia').value || 'Puntual';
@@ -3442,6 +3451,52 @@ function openSwapDishModal(dish) {
     })();
 }
 
+function getClientCuratedFridgeRecipes(items, tiempoMax = '20 min') {
+    const list = items && items.length ? items : ['Huevos', 'Patatas', 'Cebolla'];
+    const titleLead = list.slice(0, 2).join(' y ');
+    return [
+        {
+            nombre: `Salteado exprés de ${titleLead}`,
+            tiempo: tiempoMax.includes('15') ? '15 min' : '20 min',
+            descripcion: 'Plato rápido en sartén a fuego vivo aprovechando al máximo los ingredientes frescos que tienes en casa.',
+            ingredientes_usados: list.slice(0, 4),
+            ingredientes_extra: ['Aceite de oliva virgen extra', 'Sal y pimienta', '1 diente de ajo'],
+            pasos: [
+                'Picar los ingredientes en dados homogéneos y laminar el ajo.',
+                'Dorar el ajo en una sartén con dos cucharadas de aceite de oliva a fuego medio.',
+                'Añadir los ingredientes de más a menos duros y saltear 8-10 minutos hasta que estén dorados y tiernos.',
+                'Servir recién hecho con una pizca de pimienta recién molida.'
+            ]
+        },
+        {
+            nombre: `Revuelto cremoso con ${list[0] || 'huevos'}`,
+            tiempo: '15 min',
+            descripcion: 'Cena rápida, nutritiva y reconfortante con textura cremosa y sin nada de desperdicio.',
+            ingredientes_usados: list.slice(0, 3),
+            ingredientes_extra: ['2 huevos', 'Aceite de oliva', 'Pizca de sal'],
+            pasos: [
+                'Batir ligeramente los huevos en un cuenco con una pizca de sal.',
+                'Saltear los ingredientes en una sartén con un hilo de aceite durante 3-5 minutos.',
+                'Verter los huevos batidos, bajar el fuego y remover suavemente con espátula 1 minuto hasta cuajar cremoso.',
+                'Acompañar con una rebanada de pan tostado.'
+            ]
+        },
+        {
+            nombre: `Tortilla campesina de ${titleLead}`,
+            tiempo: '25 min',
+            descripcion: 'Receta tradicional española muy saciante, ideal para aprovechar verduras y sobras del frigorífico.',
+            ingredientes_usados: list.slice(0, 3),
+            ingredientes_extra: ['3-4 huevos frescos', 'Aceite de oliva virgen extra', 'Sal'],
+            pasos: [
+                'Cortar los ingredientes en láminas finas.',
+                'Pochar a fuego suave en sartén con aceite abundante hasta que estén tiernos.',
+                'Escurrir el exceso de aceite y mezclar con los huevos batidos durante 2 minutos para que empape.',
+                'Cuajar en la sartén 2 minutos por cada lado a fuego medio-alto y servir jugosa.'
+            ]
+        }
+    ];
+}
+
 function openFridgeModal() {
     const commonStaples = [
         '🥚 Huevos', '🥔 Patatas', '🧅 Cebolla', '🍅 Tomates', '🧀 Queso',
@@ -3538,8 +3593,12 @@ function openFridgeModal() {
         if (statusBox) statusBox.classList.remove('hidden');
         if (footer) footer.classList.add('hidden');
 
+        let recipes = null;
         try {
-            const { data, error } = await supabase.functions.invoke('generate-menu', {
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('TIMEOUT_FRIDGE')), 6000)
+            );
+            const invokePromise = supabase.functions.invoke('generate-menu', {
                 body: {
                     action: 'fridge_recipes',
                     ingredientes: allIngredients.join(', '),
@@ -3547,18 +3606,20 @@ function openFridgeModal() {
                 }
             });
 
-            if (error) {
-                let message = error.message || 'No se pudo conectar con Gemini.';
-                if (error.context instanceof Response) {
-                    try {
-                        const details = await error.context.clone().json();
-                        if (typeof details.error === 'string') message = details.error;
-                    } catch {}
-                }
-                throw new Error(message);
+            const res = await Promise.race([invokePromise, timeoutPromise]);
+            if (res?.data?.recipes?.length) {
+                recipes = res.data.recipes;
+            } else {
+                throw new Error(res?.error?.message || 'Error en respuesta de recetas');
             }
-            if (!Array.isArray(data?.recipes) || !data.recipes.length) {
-                throw new Error('Gemini no pudo encontrar recetas con esos ingredientes.');
+        } catch (callErr) {
+            console.warn('IA no disponible en nevera o tiempo excedido, usando recetas curadas de aprovechamiento:', callErr);
+            recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
+        }
+
+        try {
+            if (!Array.isArray(recipes) || !recipes.length) {
+                recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
             }
 
             statusBox?.classList.add('hidden');
@@ -3569,11 +3630,11 @@ function openFridgeModal() {
 
             resultsContainer.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <h4 style="margin: 0; font-size: 15px;">🍳 ${data.recipes.length} Recetas sugeridas:</h4>
+                    <h4 style="margin: 0; font-size: 15px;">🍳 ${recipes.length} Recetas sugeridas:</h4>
                     <button type="button" id="btn-fridge-retry" class="text-button" style="font-size: 12px;">← Buscar otras</button>
                 </div>
                 <div class="fridge-recipes-results">
-                    ${data.recipes.map((r, i) => `
+                    ${recipes.map((r, i) => `
                         <div class="fridge-recipe-card">
                             <div class="fridge-recipe-header">
                                 <h4>🍲 ${escapeHtml(r.nombre)}</h4>
@@ -3612,7 +3673,7 @@ function openFridgeModal() {
 
             resultsContainer.querySelectorAll('.btn-assign-fridge').forEach(btn => {
                 btn.addEventListener('click', () => {
-                    const r = data.recipes[Number(btn.dataset.fridgeIdx)];
+                    const r = recipes[Number(btn.dataset.fridgeIdx)];
                     const tipo = btn.dataset.assignType;
                     if (!r) return;
 
@@ -4063,7 +4124,7 @@ function shareMenuWhatsApp() {
         text += `  🌙 Cena: ${cena ? cena.nombre : 'Por definir'}\n\n`;
     });
     text += `_Planificado con amor en Tribuapp_ ⛺`;
-    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
 }
 
 function renderMenuView(prefillDia = null, prefillTipo = null) {
@@ -4242,7 +4303,7 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
 
     document.getElementById('menu-form').addEventListener('submit', (event) => {
         event.preventDefault();
-        const nombre = document.getElementById('menu-nombre').value.trim();
+        const nombre = document.getElementById('menu-nombre').value.trim().slice(0, 120);
         const dia = document.getElementById('menu-dia').value;
         const tipo = document.getElementById('menu-tipo').value || 'Comida';
         const tiempo = document.getElementById('menu-tiempo').value.trim() || '25 min';
@@ -4326,7 +4387,7 @@ function shareShoppingWhatsApp() {
     });
 
     text += `_Generado con Tribuapp_ ⛺`;
-    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
 }
 
 function renderCompraView() {

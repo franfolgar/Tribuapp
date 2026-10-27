@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v10';
+const CACHE_NAME = 'tribuapp-v11';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -104,7 +104,16 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetView = event.notification.data?.view || 'dashboard';
-  const targetUrl = event.notification.data?.url || './';
+  let targetUrl = './';
+  try {
+    const rawUrl = event.notification.data?.url || './';
+    const parsed = new URL(rawUrl, self.location.origin);
+    if (parsed.origin === self.location.origin) {
+      targetUrl = parsed.href;
+    }
+  } catch {
+    targetUrl = './';
+  }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
