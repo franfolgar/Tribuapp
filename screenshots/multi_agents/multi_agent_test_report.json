@@ -1,0 +1,68 @@
+{
+  "startedAt": "2026-10-27T23:18:02.116Z",
+  "agents": {
+    "chef": {
+      "name": "Agente 1: Chef & Nutricionista",
+      "status": "PASSED",
+      "actions": 10,
+      "errors": [],
+      "findings": [
+        "Ficha de receta y tiempo de preparación se visualizan con éxito.",
+        "Receta de aprovechamiento de nevera asignada a la comida de hoy con éxito.",
+        "Intercambio individual de plato funciona sin reiniciar el menú completo."
+      ],
+      "durationMs": 13245
+    },
+    "shopper": {
+      "name": "Agente 2: Super Comprador",
+      "status": "PASSED",
+      "actions": 9,
+      "errors": [],
+      "findings": [
+        "El Modo Supermercado sincroniza bidireccionalmente el estado de los artículos."
+      ],
+      "durationMs": 3625
+    },
+    "kids": {
+      "name": "Agente 3: Niños & Gamificación",
+      "status": "PASSED",
+      "actions": 13,
+      "errors": [],
+      "findings": [
+        "El sistema de confeti nativo se autodestruye correctamente sin saturar el DOM.",
+        "Filtros rápidos (Solo hoy, Mis tareas, Bolsa común) funcionan con conteos reactivos.",
+        "El Podio Familiar se muestra con 1 miembros clasificados."
+      ],
+      "durationMs": 7016
+    },
+    "chaos": {
+      "name": "Agente 4: Chaos Monkey & Seguridad",
+      "status": "PASSED",
+      "actions": 35,
+      "errors": [],
+      "findings": [
+        "Seguridad XSS confirmada: El escape HTML en items y tareas neutraliza payloads <script> e <img>.",
+        "Layout elástico: Textos largos se ajustan o truncan sin romper el viewport móvil.",
+        "Sin race conditions: El control viewRenderId resuelve correctamente clics rápidos sin estados colgados.",
+        "El toggle de temas Dark/Light responde sin parpadeos ni pérdida de estado en localStorage."
+      ],
+      "durationMs": 5638
+    },
+    "guest": {
+      "name": "Agente 5: El Invitado (Multi-usuario)",
+      "status": "PASSED",
+      "actions": 6,
+      "errors": [],
+      "findings": [
+        "Flujo de invitación completado: El segundo usuario se unió a la tribu y colabora en tiempo real."
+      ],
+      "durationMs": 8334
+    }
+  },
+  "consoleErrors": [],
+  "pageExceptions": [],
+  "networkWarnings": [],
+  "completedAt": "2026-10-27T23:18:48.348Z",
+  "totalActions": 73,
+  "overallVerdict": "SUCCESS"
+}

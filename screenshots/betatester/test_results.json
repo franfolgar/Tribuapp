@@ -1,0 +1,114 @@
+{
+  "startedAt": "2026-10-14T18:16:01.896Z",
+  "steps": [
+    {
+      "step": "Pantalla inicial de acceso",
+      "screenshot": "01_login_view.png",
+      "timestamp": "2026-10-14T18:16:05.678Z"
+    },
+    {
+      "step": "Pantalla de Onboarding",
+      "screenshot": "02_onboarding_screen.png",
+      "timestamp": "2026-10-14T18:16:08.972Z"
+    },
+    {
+      "step": "Dashboard inicial tras registro",
+      "screenshot": "03_dashboard_initial.png",
+      "timestamp": "2026-10-14T18:16:10.771Z"
+    },
+    {
+      "step": "Vista de Menús antes de generar",
+      "screenshot": "04_menus_view_empty.png",
+      "timestamp": "2026-10-14T18:16:12.095Z"
+    },
+    {
+      "step": "Modal de configuración de Menú IA",
+      "screenshot": "05_ai_menu_modal.png",
+      "timestamp": "2026-10-14T18:16:12.793Z"
+    },
+    {
+      "step": "Menú semanal completo generado",
+      "screenshot": "07_menu_generated.png",
+      "timestamp": "2026-10-14T18:16:14.028Z"
+    },
+    {
+      "step": "Detalle del plato seleccionado",
+      "screenshot": "08_dish_modal.png",
+      "timestamp": "2026-10-14T18:16:14.745Z"
+    },
+    {
+      "step": "Vista de compra",
+      "screenshot": "09_shopping_view_initial.png",
+      "timestamp": "2026-10-14T18:16:16.257Z"
+    },
+    {
+      "step": "Lista de compra organizada por pasillos",
+      "screenshot": "11_shopping_with_aisles.png",
+      "timestamp": "2026-10-14T18:16:17.592Z"
+    },
+    {
+      "step": "Modo Supermercado pantalla completa",
+      "screenshot": "12_supermarket_mode_open.png",
+      "timestamp": "2026-10-14T18:16:18.474Z"
+    },
+    {
+      "step": "Productos marcados en el carrito con progreso",
+      "screenshot": "13_supermarket_items_checked.png",
+      "timestamp": "2026-10-14T18:16:19.265Z"
+    },
+    {
+      "step": "Vista de tareas limpia (sin tareas demo falsas)",
+      "screenshot": "14_tasks_view_clean.png",
+      "timestamp": "2026-10-14T18:16:20.716Z"
+    },
+    {
+      "step": "Dos tareas creadas con recurrencia",
+      "screenshot": "15_tasks_created.png",
+      "timestamp": "2026-10-14T18:16:23.073Z"
+    },
+    {
+      "step": "Tarea completada con marca de verificación",
+      "screenshot": "16_task_marked_completed.png",
+      "timestamp": "2026-10-14T18:16:24.256Z"
+    },
+    {
+      "step": "Podio familiar con medallas y puntos acumulados",
+      "screenshot": "16b_podium_open.png",
+      "timestamp": "2026-10-14T18:16:25.000Z"
+    },
+    {
+      "step": "Vista de tareas con completadas ocultas",
+      "screenshot": "16c_tasks_hide_completed.png",
+      "timestamp": "2026-10-14T18:16:25.921Z"
+    },
+    {
+      "step": "Dashboard reflejando el progreso del hogar",
+      "screenshot": "17_dashboard_task_progress.png",
+      "timestamp": "2026-10-14T18:16:27.412Z"
+    },
+    {
+      "step": "Tarea eliminada definitivamente",
+      "screenshot": "18_task_deleted.png",
+      "timestamp": "2026-10-14T18:16:29.327Z"
+    },
+    {
+      "step": "Modal de invitación a la tribu familiar",
+      "screenshot": "19_invite_modal.png",
+      "timestamp": "2026-10-14T18:16:30.377Z"
+    }
+  ],
+  "errors": [],
+  "warnings": [],
+  "consoleLogs": [
+    {
+      "type": "verbose",
+      "text": "[DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o"
+    },
+    {
+      "type": "warn",
+      "text": "<meta name=\"apple-mobile-web-app-capable\" content=\"yes\"> is deprecated. Please include <meta name=\"mobile-web-app-capable\" content=\"yes\">"
+    }
+  ],
+  "verdict": "PASSED_PERFECT",
+  "completedAt": "2026-10-14T18:16:30.795Z"
+}
