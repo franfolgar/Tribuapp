@@ -1,6 +1,79 @@
 {
   "kanvas": 1,
   "title": "Tribuapp-main",
-  "groups": [],
-  "tasks": []
+  "groups": [
+    {
+      "id": "SG",
+      "name": "Seguridad"
+    },
+    {
+      "id": "DT",
+      "name": "Datos"
+    },
+    {
+      "id": "PW",
+      "name": "PWA"
+    },
+    {
+      "id": "AC",
+      "name": "Accesibilidad"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "SG-01",
+      "title": "Endurecer base de datos y RPC",
+      "state": "proposed",
+      "group": "SG",
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "Nueva migración: RLS de tareas_catalogo, invitaciones con usos/revocación/expulsados, RPC completar_tarea atómica y puntos en BD, grants sin TRUNCATE, límites de longitud, realtime. Verificada en producción dentro de una transacción con ROLLBACK; se aplica sólo con tu visto bueno."
+    },
+    {
+      "id": "SG-02",
+      "title": "Cerrar server.js y Edge Function",
+      "state": "proposed",
+      "group": "SG",
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "server.js sólo sirve una lista blanca de ficheros, sin .git ni repo; elimina los endpoints /api/gemini muertos; 404 real y errores JSON; cabeceras CSP. Edge Function: validación de entradas y salidas, timeout."
+    },
+    {
+      "id": "DT-01",
+      "title": "Sin pérdida silenciosa de datos",
+      "state": "proposed",
+      "group": "DT",
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "Arreglar FAB de compra, listas vacías que resucitan la demo, comprobar errores de Supabase con aviso y reversión, upsert por plato en vez del menú entero, sincronización realtime, sync tras crear/unirse, dieta correcta al cambiar plato."
+    },
+    {
+      "id": "DT-02",
+      "title": "Tareas, puntos e invitaciones en el cliente",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["SG-01"],
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "Completar tarea vía RPC (sin duplicados ni puntos falsos), puntos compartidos desde BD, recurrencia correcta, miembro expulsado vuelve al onboarding, confirmación al aceptar invitación con nombre real, logout limpia datos, sin setSession desde la URL."
+    },
+    {
+      "id": "PW-01",
+      "title": "La app funciona sin conexión",
+      "state": "proposed",
+      "group": "PW",
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "supabase-js alojado y fijado en el propio origen y precacheado; arranque offline con los datos locales y aviso; SW que no cachea HTML como recursos ni URLs con tokens; timeout de red."
+    },
+    {
+      "id": "AC-01",
+      "title": "Modo oscuro, móvil y accesibilidad",
+      "state": "proposed",
+      "group": "AC",
+      "at": "2026-10-29T15:24:11Z",
+      "by": "agent",
+      "desc": "Reglas de modo oscuro válidas, cabecera sin desbordar a 320 px, contraste AA, foco visible, modales con Escape y trampa de foco, supermercado usable con teclado, zonas táctiles de 44 px."
+    }
+  ]
 }
