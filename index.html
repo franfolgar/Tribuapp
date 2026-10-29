@@ -142,15 +142,19 @@
                 <input type="text" id="join-invite-token" placeholder="Pega aquí el enlace de invitación" required>
 
                 <label for="join-nombre-usuario">Tu nombre o apodo en la familia</label>
-                <input type="text" id="join-nombre-usuario" placeholder="Ej. Mamá, Carlos, Laura..." required>
+                <input type="text" id="join-nombre-usuario" placeholder="Ej. Mamá, Carlos, Laura..." maxlength="50" required>
 
                 <button type="submit" id="btn-join-tribu" class="btn-primary">Unirme a la Tribu</button>
+                <button type="button" id="btn-reject-invite" class="btn-secondary hidden" style="margin-top: 8px;">No, gracias</button>
             </form>
 
             <!-- Formulario 2: Crear una nueva tribu -->
             <form id="onboarding-form" class="hidden">
                 <label for="tribu-nombre">Nombre de tu hogar</label>
-                <input type="text" id="tribu-nombre" placeholder="Nombre (ej. Los García)" required>
+                <input type="text" id="tribu-nombre" placeholder="Nombre (ej. Los García)" maxlength="80" required>
+
+                <label for="tribu-nombre-usuario">Tu nombre o apodo en la familia</label>
+                <input type="text" id="tribu-nombre-usuario" placeholder="Ej. Mamá, Carlos, Laura..." maxlength="50" required>
                 
                 <label for="tribu-dieta">Dieta base</label>
                 <select id="tribu-dieta" class="input-select" required>

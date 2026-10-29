@@ -26,7 +26,8 @@ const ARCHIVOS_PUBLICOS = new Set([
   'icon-192.png',
   'icon-512.png',
   'icon-maskable.png',
-  'apple-touch-icon.png'
+  'apple-touch-icon.png',
+  'register-sw.js'
 ]);
 
 // Hashes de los <script> inline de index.html para permitirlos en la CSP
