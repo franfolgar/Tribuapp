@@ -11,7 +11,8 @@ PWA de organización familiar: menú semanal, lista de la compra, tareas recurre
 - Pruebas E2E con Puppeteer: `node scripts/family-betatester.js`, `scripts/intensive-night-tester.js`, `scripts/multi-agent-testing.js`. Las capturas y los resultados van a `screenshots/`. Último informe: `docs/informe_betatester_familia_gomez.md`.
 
 ## Backend
-- Endpoints Express: `POST /api/gemini/generate-menu`, `POST /api/gemini/fridge-recipes`. Sin `GEMINI_API_KEY` devuelven contenido curado.
+- `server.js` sólo sirve estáticos de una lista blanca (index.html, app.js, style.css, sw.js, manifest.json, iconos y `/vendor/`) con CSP y cabeceras de seguridad. No tiene API: `/api/*` responde 404. Las rutas sin extensión que piden HTML caen en index.html (SPA). Si añades un fichero público, añádelo a `ARCHIVOS_PUBLICOS`; si añades un `<script>` inline a index.html, su hash se calcula al arrancar.
+- La IA (menú semanal, cambiar plato, receta paso a paso, recetas de nevera) va por la Edge Function `generate-menu`, que exige usuario con familia y usa el secreto `GEMINI_API_KEY` de Supabase; sin clave o si Gemini falla devuelve contenido curado.
 - Supabase: `supabase/migrations/` (RLS de familias, invitaciones, menú y compra, tareas) y la Edge Function `supabase/functions/generate-menu`.
 - `app.js` lleva la URL y la *anon key* de Supabase. Son públicas por diseño: la seguridad depende de las políticas RLS. No pongas nunca la *service role key* en el frontend.
 
