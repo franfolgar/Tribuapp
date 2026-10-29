@@ -554,8 +554,15 @@ button.chip {
     gap: 12px;
 }
 
+.task-list > *,
+.menu-list > *,
+.shopping-list > * {
+    min-width: 0;
+}
+
 .task-card strong,
 .menu-card strong {
+    overflow-wrap: anywhere;
     display: block;
     margin-bottom: 4px;
 }

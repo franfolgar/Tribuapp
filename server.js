@@ -27,7 +27,8 @@ const ARCHIVOS_PUBLICOS = new Set([
   'icon-512.png',
   'icon-maskable.png',
   'apple-touch-icon.png',
-  'register-sw.js'
+  'register-sw.js',
+  'vendor/supabase-js.mjs' // supabase-js empaquetado localmente (mismo origen, sin CDN)
 ]);
 
 // Hashes de los <script> inline de index.html para permitirlos en la CSP
@@ -108,8 +109,6 @@ app.use((req, res, next) => {
   servirRaiz(req, res, next);
 });
 
-// supabase-js empaquetado localmente (mismo origen, sin CDN)
-app.use('/vendor', express.static(path.join(__dirname, 'vendor'), opcionesEstaticas));
 
 // Fallback SPA: sólo navegaciones (GET que aceptan HTML) a rutas sin extensión
 app.get('*', (req, res, next) => {

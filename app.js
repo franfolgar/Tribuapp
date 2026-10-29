@@ -1058,6 +1058,7 @@ async function syncFamilyDataFromSupabase() {
     }
     let ok = false;
     try {
+        if (!(await comprobarPertenenciaFamilia())) return false;
         const [menuRes, shopRes] = await Promise.all([
             supabase.from('familias_menus')
                 .select('*')
@@ -1175,9 +1176,34 @@ async function persistShoppingItemToSupabase(item, action = 'upsert', cambios = 
     }
 }
 
+function esErrorDePermisos(error) {
+    return error?.code === '42501' || error?.status === 401 || error?.status === 403;
+}
+
 function mostrarErrorGuardado(texto, error) {
     console.warn(texto, error);
+    if (esErrorDePermisos(error)) {
+        showToast(`⚠️ ${texto} No tienes permiso en esta familia.`);
+        comprobarPertenenciaFamilia();
+        return;
+    }
     showToast(`⚠️ ${texto} Revisa tu conexión e inténtalo de nuevo.`);
+}
+
+// Si un admin nos ha quitado de la familia, volver al onboarding sin esperar a recargar.
+// Devuelve false si ya no pertenecemos a la familia.
+async function comprobarPertenenciaFamilia() {
+    if (!currentUser || !currentProfile?.familia_id) return true;
+    const { data: perfil, error } = await supabase.from('usuarios').select('familia_id').eq('id', currentUser.id).maybeSingle();
+    if (error || perfil?.familia_id === currentProfile.familia_id) return true;
+    currentProfile = { ...currentProfile, familia_id: perfil?.familia_id || null };
+    detenerSincronizacionTiempoReal();
+    if (perfil?.familia_id) {
+        await mostrarApp();
+    } else {
+        mostrarOnboarding('Ya no perteneces a esta familia. Crea una tribu nueva o únete con una invitación.');
+    }
+    return false;
 }
 
 // --- Operaciones de compra y menú: se aplican al momento y se deshacen si Supabase falla ---
@@ -1909,7 +1935,15 @@ function setCurrentUser(user) {
 }
 
 function getFriendlyUserName() {
+    const nombreGuardado = currentUser?.user_metadata?.nombre;
+    if (typeof nombreGuardado === 'string' && nombreGuardado.trim()) return nombreGuardado.trim().slice(0, 50);
     return currentUser?.email ? currentUser.email.split('@')[0] : 'Tú';
+}
+
+// El nombre del registro se guarda en la cuenta para no perderlo si se recarga o se rechaza una invitación
+function datosRegistro(nombre) {
+    const limpio = String(nombre || '').trim().slice(0, 50);
+    return limpio ? { data: { nombre: limpio } } : {};
 }
 
 async function checkSession() {
@@ -2443,7 +2477,7 @@ authForm.addEventListener('submit', async (event) => {
             let authUser = null;
 
             // Intento 1: Registro directo
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password, options: datosRegistro(memberName) });
             if (!signUpError && signUpData.user) {
                 if (!signUpData.session) {
                     try {
@@ -2486,7 +2520,7 @@ authForm.addEventListener('submit', async (event) => {
 
         if (authMode === 'signup') {
             btnSubmit.innerText = 'Creando cuenta...';
-            const { data, error } = await supabase.auth.signUp({ email, password });
+            const { data, error } = await supabase.auth.signUp({ email, password, options: datosRegistro(memberName) });
             if (error) throw error;
 
             if (data.session && data.user) {
@@ -3788,8 +3822,8 @@ async function cargarVistaTareas(renderId) {
 
             return `
                 <div class="task-card ${completed ? 'completed' : ''}">
-                    <div style="flex: 1;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                             <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
                             <span class="task-points-badge" title="Puntos al completar">⭐ +10</span>
                             ${isOverdue ? '<span class="badge-overdue">Atrasada</span>' : ''}
@@ -4108,7 +4142,7 @@ function openSwapDishModal(dish) {
             console.error('Error al cambiar plato:', err);
             statusBox?.classList.add('hidden');
             if (errorBox) {
-                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar alternativas.'}`;
+                errorBox.innerText = err?.message || 'No se pudieron generar alternativas.';
                 errorBox.classList.remove('hidden');
             }
         }
@@ -4361,7 +4395,7 @@ function openFridgeModal() {
             if (statusBox) statusBox.classList.add('hidden');
             if (footer) footer.classList.remove('hidden');
             if (errorBox) {
-                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar recetas.'}`;
+                errorBox.innerText = err?.message || 'No se pudieron generar recetas.';
                 errorBox.classList.remove('hidden');
             }
         }
