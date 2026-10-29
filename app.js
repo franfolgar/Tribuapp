@@ -750,29 +750,27 @@ function openQuickAddShoppingModal() {
     openModal(html);
     setTimeout(() => document.getElementById('quick-shop-name')?.focus(), 100);
 
-    document.getElementById('quick-shop-form')?.addEventListener('submit', (e) => {
+    document.getElementById('quick-shop-name')?.addEventListener('input', (event) => event.target.setCustomValidity(''));
+
+    document.getElementById('quick-shop-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const nombre = document.getElementById('quick-shop-name').value.trim();
+        const nameInput = document.getElementById('quick-shop-name');
+        const nombre = nameInput.value.trim();
         const cantidad = document.getElementById('quick-shop-cant').value.trim();
         const secVal = document.getElementById('quick-shop-sec').value;
         const seccion = secVal === 'auto' ? getAisleCategory(nombre) : secVal;
 
         if (!nombre) return;
-        const newItem = {
-            id: crypto.randomUUID(),
-            nombre,
-            cantidad,
-            seccion,
-            comprado: false
-        };
-        state.shopping.push(newItem);
-        saveAppState(state);
-        persistShoppingItemToSupabase(newItem, 'upsert');
-        showToast(`🛒 "${nombre}" añadido a la compra`);
-        closeModal();
-        if (currentView === 'dashboard' || currentView === 'compra') {
-            renderizarVista(currentView);
+        const state = getAppState();
+        const exists = state.shopping.some((item) => item.nombre.toLocaleLowerCase() === nombre.toLocaleLowerCase() && !item.comprado);
+        if (exists) {
+            nameInput.setCustomValidity('Este producto ya está en la lista.');
+            nameInput.reportValidity();
+            return;
         }
+        closeModal();
+        const added = await anadirProductosACompra([{ nombre, cantidad, seccion }]);
+        if (added > 0) showToast(`🛒 "${nombre}" añadido a la compra`);
     });
 }
 
@@ -949,7 +947,7 @@ function openQuickAddMealModal() {
     openModal(html);
     setTimeout(() => document.getElementById('quick-meal-name')?.focus(), 100);
 
-    document.getElementById('quick-meal-form')?.addEventListener('submit', (e) => {
+    document.getElementById('quick-meal-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const nombre = document.getElementById('quick-meal-name').value.trim();
         const dia = document.getElementById('quick-meal-day').value;
@@ -959,35 +957,15 @@ function openQuickAddMealModal() {
         const ingredientes = rawIng ? rawIng.split(',').map(s => s.trim()).filter(Boolean) : [];
 
         if (!nombre) return;
-        const state = getAppState();
-        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
-        const newMeal = {
-            id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
-            dia,
-            tipo,
-            nombre,
-            tiempo,
-            ingredientes
-        };
-        if (existingIdx >= 0) {
-            state.menu[existingIdx] = newMeal;
-        } else {
-            state.menu.push(newMeal);
-        }
-        saveAppState(state);
-        persistMenuToSupabase(state.menu);
-        showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
         closeModal();
+        if (!await guardarPlatoEnMenu({ dia, tipo, nombre, tiempo, ingredientes })) return;
+        showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
 
         if (dia === todayDayName) {
             showServiceWorkerNotification(`🍽️ Plato para hoy (${tipo})`, {
                 body: `Se ha añadido "${nombre}" al menú familiar de hoy.`,
                 data: { view: 'menus', url: './' }
             });
-        }
-
-        if (currentView === 'dashboard' || currentView === 'menus') {
-            renderizarVista(currentView);
         }
     });
 }
@@ -1028,10 +1006,29 @@ function saveToStorage(key, value) {
     }
 }
 
+// Identificadores y platos de la demo: una familia real nunca debe verlos ni subirlos.
+const DEMO_SHOPPING_IDS = new Set(defaultState.shopping.map(item => item.id));
+const DEMO_MENU_IDS = new Set(defaultState.menu.map(item => item.id));
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function esPlatoDemo(item) {
+    return DEMO_MENU_IDS.has(item?.id) ||
+        defaultState.menu.some(d => d.dia === item?.dia && d.tipo === item?.tipo && d.nombre === item?.nombre);
+}
+
 function getAppState() {
-    const stored = readFromStorage(STORAGE_KEYS.app, defaultState) || {};
-    const rawShopping = Array.isArray(stored.shopping) && stored.shopping.length ? stored.shopping : defaultState.shopping;
-    const rawMenu = Array.isArray(stored.menu) && stored.menu.length ? stored.menu : defaultState.menu;
+    const stored = readFromStorage(STORAGE_KEYS.app, null);
+    const tieneFamilia = !!currentProfile?.familia_id;
+    // La demo sólo se usa si no hay nada guardado y no hay una familia real detrás.
+    const base = stored && typeof stored === 'object'
+        ? stored
+        : (tieneFamilia ? { shopping: [], menu: [] } : defaultState);
+    let rawShopping = Array.isArray(base.shopping) ? base.shopping.filter(Boolean) : [];
+    let rawMenu = Array.isArray(base.menu) ? base.menu.filter(Boolean) : [];
+    if (tieneFamilia) {
+        rawShopping = rawShopping.filter(item => !DEMO_SHOPPING_IDS.has(item.id));
+        rawMenu = rawMenu.filter(item => !DEMO_MENU_IDS.has(item.id));
+    }
 
     const shopping = rawShopping.map(item => ({
         ...item,
@@ -1055,112 +1052,533 @@ function saveAppState(state) {
     return false;
 }
 
+function compraDesdeFila(s) {
+    return {
+        id: s.id,
+        nombre: s.nombre,
+        cantidad: s.cantidad || '',
+        seccion: s.seccion || getAisleCategory(s.nombre),
+        comprado: !!s.comprado
+    };
+}
+
+function platoDesdeFila(m) {
+    return {
+        id: m.id,
+        dia: m.dia,
+        tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: m.nombre,
+        tiempo: m.tiempo || '25 min',
+        ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
+    };
+}
+
+// Descarga menú y compra de la familia. Supabase manda: si la tabla está vacía, la lista local queda vacía.
 async function syncFamilyDataFromSupabase() {
-    if (!currentProfile?.familia_id) return;
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) {
+        detenerSincronizacionTiempoReal();
+        return false;
+    }
+    let ok = false;
     try {
         const [menuRes, shopRes] = await Promise.all([
             supabase.from('familias_menus')
                 .select('*')
-                .eq('familia_id', currentProfile.familia_id),
+                .eq('familia_id', familiaId),
             supabase.from('familias_compras')
                 .select('*')
-                .eq('familia_id', currentProfile.familia_id)
+                .eq('familia_id', familiaId)
                 .order('creado_en', { ascending: true })
         ]);
+        if (currentProfile?.familia_id !== familiaId) return false;
 
         const state = getAppState();
         let stateChanged = false;
 
-        if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length > 0) {
-            state.menu = menuRes.data.map(m => ({
-                id: m.id,
-                dia: m.dia,
-                tipo: m.tipo,
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
+        if (!menuRes.error && Array.isArray(menuRes.data)) {
+            state.menu = menuRes.data.filter(m => !esPlatoDemo(m)).map(platoDesdeFila);
             stateChanged = true;
-        } else if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length === 0 && state.menu.length > 0) {
-            // Migración inicial: subir menú local existente a Supabase
-            await persistMenuToSupabase(state.menu);
+        } else if (menuRes.error) {
+            console.warn('No se pudo descargar el menú de la familia:', menuRes.error);
         }
 
         if (!shopRes.error && Array.isArray(shopRes.data)) {
-            state.shopping = shopRes.data.map(s => ({
-                id: s.id,
-                nombre: s.nombre,
-                cantidad: s.cantidad || '',
-                seccion: s.seccion || getAisleCategory(s.nombre),
-                comprado: !!s.comprado
-            }));
+            state.shopping = shopRes.data.filter(s => !DEMO_SHOPPING_IDS.has(s.id)).map(compraDesdeFila);
             stateChanged = true;
+        } else if (shopRes.error) {
+            console.warn('No se pudo descargar la compra de la familia:', shopRes.error);
         }
 
         if (stateChanged) {
             saveToStorage(STORAGE_KEYS.app, state);
         }
+        ok = !menuRes.error && !shopRes.error;
     } catch (e) {
         console.warn('Error sincronizando datos familiares de Supabase:', e);
     }
+    iniciarSincronizacionTiempoReal(familiaId);
+    return ok;
 }
 
-async function persistMenuToSupabase(menuList) {
-    if (!currentProfile?.familia_id || !Array.isArray(menuList) || !menuList.length) return;
-    try {
-        const records = menuList.map(item => ({
-            familia_id: currentProfile.familia_id,
-            dia: item.dia,
-            tipo: item.tipo,
-            nombre: item.nombre,
-            tiempo: item.tiempo || '25 min',
-            ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
-            actualizado_en: new Date().toISOString()
-        }));
-        await supabase.from('familias_menus').upsert(records, { onConflict: 'familia_id,dia,tipo' });
-    } catch (err) {
-        console.warn('No se pudo guardar el menú en Supabase:', err);
-    }
+function filaMenuParaSupabase(item) {
+    return {
+        familia_id: currentProfile.familia_id,
+        dia: item.dia,
+        tipo: item.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: item.nombre,
+        tiempo: item.tiempo || '25 min',
+        ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
+        actualizado_en: new Date().toISOString()
+    };
 }
 
-async function persistShoppingItemToSupabase(item, action = 'upsert') {
-    if (!currentProfile?.familia_id || !item?.id) return;
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id);
-    if (!isUuid) {
-        if (action === 'delete') return;
-        const oldId = item.id;
-        item.id = crypto.randomUUID();
-        const state = getAppState();
-        const found = state.shopping.find(s => s.id === oldId || s.nombre === item.nombre);
-        if (found) found.id = item.id;
-        saveAppState(state);
-        action = 'upsert';
-    }
+// Guarda sólo los platos indicados (uno al editar; los 12 al regenerar el menú completo).
+// Devuelve null si se guardó o el error de Supabase.
+async function persistMenuToSupabase(platos) {
+    const lista = (Array.isArray(platos) ? platos : [platos]).filter(Boolean);
+    if (!currentProfile?.familia_id || !lista.length) return null;
     try {
-        if (action === 'delete') {
-            await supabase.from('familias_compras').delete().eq('id', item.id);
-        } else if (action === 'update') {
-            await supabase.from('familias_compras').update({
-                nombre: item.nombre,
-                cantidad: item.cantidad || '',
-                seccion: item.seccion || 'General',
-                comprado: !!item.comprado,
-                actualizado_en: new Date().toISOString()
-            }).eq('id', item.id);
-        } else {
-            await supabase.from('familias_compras').upsert({
-                id: item.id,
-                familia_id: currentProfile.familia_id,
-                nombre: item.nombre,
-                cantidad: item.cantidad || '',
-                seccion: item.seccion || 'General',
-                comprado: !!item.comprado,
-                actualizado_en: new Date().toISOString()
+        const { data, error } = await supabase.from('familias_menus')
+            .upsert(lista.map(filaMenuParaSupabase), { onConflict: 'familia_id,dia,tipo' })
+            .select('id, dia, tipo');
+        if (error) return error;
+        // Adoptamos el id de la base de datos para casar después los eventos en tiempo real.
+        if (Array.isArray(data) && data.length) {
+            const state = getAppState();
+            let cambiado = false;
+            data.forEach((fila) => {
+                const local = state.menu.find(m => m.dia === fila.dia && m.tipo === fila.tipo);
+                if (local && local.id !== fila.id) {
+                    local.id = fila.id;
+                    cambiado = true;
+                }
             });
+            if (cambiado) saveToStorage(STORAGE_KEYS.app, state);
         }
+        return null;
     } catch (err) {
-        console.warn('No se pudo sincronizar la compra en Supabase:', err);
+        return err;
     }
+}
+
+function filaCompraParaSupabase(item) {
+    return {
+        id: item.id,
+        familia_id: currentProfile.familia_id,
+        nombre: item.nombre,
+        cantidad: item.cantidad || '',
+        seccion: item.seccion || 'General',
+        comprado: !!item.comprado,
+        actualizado_en: new Date().toISOString()
+    };
+}
+
+// item puede ser un producto o una lista (para 'upsert' y 'delete'). En 'update' sólo se envían los campos de `cambios`.
+// Devuelve null si se guardó o el error de Supabase.
+async function persistShoppingItemToSupabase(item, action = 'upsert', cambios = null) {
+    const items = (Array.isArray(item) ? item : [item]).filter(it => it?.id);
+    if (!currentProfile?.familia_id || !items.length) return null;
+    try {
+        let res;
+        if (action === 'delete') {
+            const ids = items.map(it => it.id).filter(id => UUID_REGEX.test(id));
+            if (!ids.length) return null;
+            res = await supabase.from('familias_compras').delete().in('id', ids);
+        } else if (action === 'update') {
+            if (!UUID_REGEX.test(items[0].id)) return null;
+            res = await supabase.from('familias_compras')
+                .update({ ...(cambios || { comprado: !!items[0].comprado }), actualizado_en: new Date().toISOString() })
+                .eq('id', items[0].id);
+        } else {
+            res = await supabase.from('familias_compras').upsert(items.map(filaCompraParaSupabase));
+        }
+        return res?.error || null;
+    } catch (err) {
+        return err;
+    }
+}
+
+function mostrarErrorGuardado(texto, error) {
+    console.warn(texto, error);
+    showToast(`⚠️ ${texto} Revisa tu conexión e inténtalo de nuevo.`);
+}
+
+// --- Operaciones de compra y menú: se aplican al momento y se deshacen si Supabase falla ---
+
+async function anadirProductosACompra(productos) {
+    const state = getAppState();
+    const nuevos = [];
+    productos.forEach((p) => {
+        const nombre = String(p?.nombre || '').trim();
+        if (!nombre) return;
+        const repetido = state.shopping.concat(nuevos)
+            .some(s => s.nombre.toLocaleLowerCase() === nombre.toLocaleLowerCase() && !s.comprado);
+        if (repetido) return;
+        nuevos.push({
+            id: crypto.randomUUID(),
+            nombre,
+            cantidad: p.cantidad || '',
+            seccion: p.seccion || getAisleCategory(nombre),
+            comprado: false
+        });
+    });
+    if (!nuevos.length) return 0;
+    state.shopping.push(...nuevos);
+    if (!saveAppState(state)) return -1;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(nuevos, 'upsert');
+    if (error) {
+        const ids = new Set(nuevos.map(n => n.id));
+        const actual = getAppState();
+        actual.shopping = actual.shopping.filter(s => !ids.has(s.id));
+        saveAppState(actual);
+        mostrarErrorGuardado(nuevos.length === 1
+            ? `No se pudo añadir "${nuevos[0].nombre}" a la compra.`
+            : 'No se pudieron añadir los productos a la compra.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return -1;
+    }
+    return nuevos.length;
+}
+
+async function marcarProductoComprado(id, comprado) {
+    const state = getAppState();
+    const item = state.shopping.find(s => s.id === id);
+    if (!item) return false;
+    const anterior = !!item.comprado;
+    item.comprado = !!comprado;
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(item, 'update', { comprado: !!comprado });
+    if (error) {
+        const actual = getAppState();
+        const it = actual.shopping.find(s => s.id === id);
+        if (it) it.comprado = anterior;
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo actualizar "${item.nombre}".`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+async function eliminarProductosDeCompra(ids) {
+    const idSet = new Set(ids);
+    const state = getAppState();
+    const quitados = state.shopping
+        .map((it, idx) => ({ it, idx }))
+        .filter(({ it }) => idSet.has(it.id));
+    if (!quitados.length) return true;
+    state.shopping = state.shopping.filter(it => !idSet.has(it.id));
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(quitados.map(q => q.it), 'delete');
+    if (error) {
+        const actual = getAppState();
+        quitados.forEach(({ it, idx }) => {
+            if (!actual.shopping.some(s => s.id === it.id)) {
+                actual.shopping.splice(Math.min(idx, actual.shopping.length), 0, it);
+            }
+        });
+        saveAppState(actual);
+        mostrarErrorGuardado(quitados.length === 1
+            ? `No se pudo eliminar "${quitados[0].it.nombre}".`
+            : 'No se pudieron eliminar los productos.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Pone un plato en su hueco (día + tipo) y sólo sube ese plato.
+async function guardarPlatoEnMenu(plato) {
+    const state = getAppState();
+    const tipo = plato.tipo === 'Cena' ? 'Cena' : 'Comida';
+    const idx = state.menu.findIndex(m => m.dia === plato.dia && m.tipo === tipo);
+    const anterior = idx >= 0 ? state.menu[idx] : null;
+    const nuevo = {
+        id: anterior ? anterior.id : crypto.randomUUID(),
+        dia: plato.dia,
+        tipo,
+        nombre: plato.nombre,
+        tiempo: plato.tiempo || '25 min',
+        ingredientes: Array.isArray(plato.ingredientes) ? plato.ingredientes : []
+    };
+    if (idx >= 0) state.menu[idx] = nuevo;
+    else state.menu.push(nuevo);
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistMenuToSupabase([nuevo]);
+    if (error) {
+        const actual = getAppState();
+        const i = actual.menu.findIndex(m => m.dia === nuevo.dia && m.tipo === nuevo.tipo);
+        if (anterior) {
+            if (i >= 0) actual.menu[i] = anterior;
+            else actual.menu.push(anterior);
+        } else if (i >= 0) {
+            actual.menu.splice(i, 1);
+        }
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo guardar "${nuevo.nombre}" en el menú.`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+async function eliminarPlatoDelMenu(id) {
+    const state = getAppState();
+    const idx = state.menu.findIndex(m => m.id === id);
+    if (idx < 0) return true;
+    const plato = state.menu[idx];
+    state.menu.splice(idx, 1);
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+    if (!currentProfile?.familia_id) return true;
+
+    let error = null;
+    try {
+        ({ error } = await supabase.from('familias_menus')
+            .delete()
+            .eq('familia_id', currentProfile.familia_id)
+            .eq('dia', plato.dia)
+            .eq('tipo', plato.tipo));
+    } catch (err) {
+        error = err;
+    }
+    if (error) {
+        const actual = getAppState();
+        if (!actual.menu.some(m => m.dia === plato.dia && m.tipo === plato.tipo)) {
+            actual.menu.splice(Math.min(idx, actual.menu.length), 0, plato);
+        }
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo eliminar "${plato.nombre}" del menú.`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Sustituye el menú entero (generado con IA o del chef) y sube los 12 platos de una vez.
+async function guardarMenuCompleto(platos) {
+    const state = getAppState();
+    const previo = state.menu;
+    state.menu = platos.map(p => ({
+        id: crypto.randomUUID(),
+        dia: p.dia,
+        tipo: p.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: p.nombre,
+        tiempo: p.tiempo || '25 min',
+        ingredientes: Array.isArray(p.ingredientes) ? p.ingredientes : []
+    }));
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistMenuToSupabase(state.menu);
+    if (error) {
+        const actual = getAppState();
+        actual.menu = previo;
+        saveAppState(actual);
+        mostrarErrorGuardado('No se pudo guardar el menú semanal.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Sube a Supabase una copia restaurada: primero escribe lo nuevo y después borra lo que sobra.
+async function restaurarCopiaEnSupabase(restoredState) {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) return null;
+    try {
+        const [shopRes, menuRes] = await Promise.all([
+            supabase.from('familias_compras').select('id').eq('familia_id', familiaId),
+            supabase.from('familias_menus').select('id, dia, tipo').eq('familia_id', familiaId)
+        ]);
+        if (shopRes.error) return shopRes.error;
+        if (menuRes.error) return menuRes.error;
+
+        const nuevosIds = new Set(restoredState.shopping.map(it => it.id));
+        if (restoredState.shopping.length) {
+            const error = await persistShoppingItemToSupabase(restoredState.shopping, 'upsert');
+            if (error) return error;
+        }
+        const sobrantes = (shopRes.data || []).filter(f => !nuevosIds.has(f.id)).map(f => ({ id: f.id }));
+        if (sobrantes.length) {
+            const error = await persistShoppingItemToSupabase(sobrantes, 'delete');
+            if (error) return error;
+        }
+
+        if (restoredState.menu.length) {
+            const error = await persistMenuToSupabase(restoredState.menu);
+            if (error) return error;
+        }
+        const huecos = new Set(restoredState.menu.map(m => `${m.dia}|${m.tipo}`));
+        const platosSobrantes = (menuRes.data || []).filter(f => !huecos.has(`${f.dia}|${f.tipo}`)).map(f => f.id);
+        if (platosSobrantes.length) {
+            const { error } = await supabase.from('familias_menus').delete().in('id', platosSobrantes);
+            if (error) return error;
+        }
+        return null;
+    } catch (err) {
+        return err;
+    }
+}
+
+// --- Sincronización en tiempo real de compra y menú ---
+
+let canalTiempoReal = null;
+let canalTiempoRealFamiliaId = null;
+let refrescoVistaTimer = null;
+let ultimaResincronizacion = 0;
+
+function iniciarSincronizacionTiempoReal(familiaId) {
+    if (!familiaId || typeof supabase.channel !== 'function') return;
+    if (canalTiempoReal && canalTiempoRealFamiliaId === familiaId && ['joined', 'joining'].includes(canalTiempoReal.state)) return;
+    detenerSincronizacionTiempoReal();
+
+    let suscritoAntes = false;
+    const filtro = `familia_id=eq.${familiaId}`;
+    const canal = supabase.channel(`familia-datos-${familiaId}`);
+    ['familias_compras', 'familias_menus'].forEach((tabla) => {
+        const alRecibir = (payload) => aplicarCambioRemoto(tabla, payload, familiaId);
+        canal
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: tabla, filter: filtro }, alRecibir)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: tabla, filter: filtro }, alRecibir)
+            // Los DELETE no admiten filtro en Realtime: sólo traen el id y se casan por id.
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: tabla }, alRecibir);
+    });
+    canal.subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        // Tras una reconexión puede haberse perdido algún evento: resincronizamos.
+        if (suscritoAntes) resincronizarDatosFamilia();
+        suscritoAntes = true;
+    });
+    canalTiempoReal = canal;
+    canalTiempoRealFamiliaId = familiaId;
+}
+
+function detenerSincronizacionTiempoReal() {
+    const canal = canalTiempoReal;
+    canalTiempoReal = null;
+    canalTiempoRealFamiliaId = null;
+    clearTimeout(refrescoVistaTimer);
+    if (canal) {
+        try {
+            supabase.removeChannel(canal);
+        } catch (err) {
+            console.warn('No se pudo cerrar el canal en tiempo real:', err);
+        }
+    }
+}
+
+function aplicarCambioRemoto(tabla, payload, familiaId) {
+    if (currentProfile?.familia_id !== familiaId) {
+        detenerSincronizacionTiempoReal();
+        return;
+    }
+    const evento = payload?.eventType;
+    const fila = payload?.new;
+    const state = getAppState();
+
+    if (tabla === 'familias_compras') {
+        if (evento === 'DELETE') {
+            const id = payload?.old?.id;
+            if (!id || !state.shopping.some(s => s.id === id)) return;
+            state.shopping = state.shopping.filter(s => s.id !== id);
+        } else {
+            if (!fila?.id || fila.familia_id !== familiaId || DEMO_SHOPPING_IDS.has(fila.id)) return;
+            const item = compraDesdeFila(fila);
+            const idx = state.shopping.findIndex(s => s.id === item.id);
+            if (idx >= 0) state.shopping[idx] = item;
+            else state.shopping.push(item);
+        }
+    } else if (tabla === 'familias_menus') {
+        if (evento === 'DELETE') {
+            const id = payload?.old?.id;
+            if (!id || !state.menu.some(m => m.id === id)) return;
+            state.menu = state.menu.filter(m => m.id !== id);
+        } else {
+            if (!fila?.id || fila.familia_id !== familiaId || esPlatoDemo(fila)) return;
+            const plato = platoDesdeFila(fila);
+            state.menu = state.menu.filter(m => m.id !== plato.id && !(m.dia === plato.dia && m.tipo === plato.tipo));
+            state.menu.push(plato);
+        }
+    } else {
+        return;
+    }
+
+    saveToStorage(STORAGE_KEYS.app, state);
+    clearTimeout(refrescoVistaTimer);
+    refrescoVistaTimer = setTimeout(() => refrescarVistasDeDatos(), 150);
+}
+
+function hayEdicionEnCurso() {
+    if (!mainContent) return false;
+    if (mainContent.querySelector('form.panel:not(.hidden)')) return true;
+    const activo = document.activeElement;
+    return !!(activo && mainContent.contains(activo) && /^(INPUT|TEXTAREA|SELECT)$/.test(activo.tagName) && activo.type !== 'checkbox');
+}
+
+// Vuelve a pintar las vistas que muestran compra o menú. Si el usuario está escribiendo, espera.
+function refrescarVistasDeDatos({ forzar = false } = {}) {
+    const supermercado = document.getElementById('supermarket-modal');
+    if (supermercado && typeof supermercado.refrescar === 'function') supermercado.refrescar();
+    if (!currentProfile?.familia_id || appView?.classList.contains('hidden')) return;
+    if (!['compra', 'menus', 'dashboard'].includes(currentView)) return;
+    if (!forzar && hayEdicionEnCurso()) {
+        clearTimeout(refrescoVistaTimer);
+        refrescoVistaTimer = setTimeout(() => refrescarVistasDeDatos(), 1500);
+        return;
+    }
+    if (currentView === 'compra') renderCompraView();
+    else if (currentView === 'menus') renderMenuView();
+    else renderDashboard(viewRenderId).catch(err => console.warn('No se pudo refrescar el resumen:', err));
+}
+
+async function resincronizarDatosFamilia() {
+    if (!currentProfile?.familia_id) return;
+    ultimaResincronizacion = Date.now();
+    if (await syncFamilyDataFromSupabase()) refrescarVistasDeDatos();
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !currentProfile?.familia_id) return;
+    if (Date.now() - ultimaResincronizacion < 5000) return;
+    resincronizarDatosFamilia();
+});
+
+// Dieta real de la familia (familias.dieta_base), con caché por familia.
+const DIETAS_IA = ['Mediterránea', 'Vegetariana', 'Saludable y ligera', 'Familiar con niños'];
+let dietaFamiliaCache = { familiaId: null, dieta: null };
+
+async function obtenerDietaFamilia() {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) return 'Mediterránea';
+    if (dietaFamiliaCache.familiaId === familiaId && dietaFamiliaCache.dieta) return dietaFamiliaCache.dieta;
+    try {
+        const { data, error } = await supabase.from('familias').select('dieta_base').eq('id', familiaId).maybeSingle();
+        if (!error && data?.dieta_base) dietaFamiliaCache = { familiaId, dieta: data.dieta_base };
+    } catch (err) {
+        console.warn('No se pudo leer la dieta de la familia:', err);
+    }
+    return dietaFamiliaCache.familiaId === familiaId && dietaFamiliaCache.dieta ? dietaFamiliaCache.dieta : 'Mediterránea';
+}
+
+// La IA sólo acepta unas dietas concretas; el resto ("Libre", etc.) se trata como mediterránea.
+function dietaParaIA(dieta) {
+    return DIETAS_IA.includes(dieta) ? dieta : 'Mediterránea';
+}
+
+function listaDeTextos(valor) {
+    if (Array.isArray(valor)) return valor.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim());
+    if (typeof valor === 'string') return valor.split(',').map(v => v.trim()).filter(Boolean);
+    return [];
 }
 
 
@@ -3344,31 +3762,20 @@ function openRecipeModal(dish) {
         }
     });
 
-    document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', () => {
-        const state = getAppState();
-        let added = 0;
-        ingList.forEach(ing => {
-            const exists = state.shopping.some(s => s.nombre.toLowerCase() === ing.toLowerCase() && !s.comprado);
-            if (!exists) {
-                const newItem = {
-                    id: crypto.randomUUID(),
-                    nombre: ing,
-                    seccion: getAisleCategory(ing),
-                    comprado: false
-                };
-                state.shopping.push(newItem);
-                persistShoppingItemToSupabase(newItem, 'upsert');
-                added++;
-            }
-        });
-        saveAppState(state);
-        showToast(`¡Añadidos ${added} ingredientes a la lista de compra!`);
+    document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', async () => {
+        const realIngredients = listaDeTextos(dish.ingredientes);
         closeModal();
+        if (!realIngredients.length) {
+            showToast('Este plato no tiene ingredientes registrados.');
+            return;
+        }
+        const added = await anadirProductosACompra(realIngredients.map(nombre => ({ nombre })));
+        if (added > 0) showToast(`¡Añadido${added === 1 ? '' : 's'} ${added} ingrediente${added === 1 ? '' : 's'} a la lista de compra!`);
+        else if (added === 0) showToast('Esos ingredientes ya estaban en la lista de compra.');
     });
 }
 
 function openSwapDishModal(dish) {
-    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
     const html = `
         <div class="modal-header">
             <h3>🔄 Cambiar plato con IA</h3>
@@ -3379,7 +3786,7 @@ function openSwapDishModal(dish) {
         </p>
         <div id="swap-status-box" style="text-align: center; padding: 24px 10px;">
             <p style="font-weight: 700; color: var(--primary); margin-bottom: 4px;">Pensando 3 alternativas con Gemini...</p>
-            <p style="font-size: 12px; color: var(--text-muted);">Buscando opciones equilibradas para dieta ${escapeHtml(curDiet)}.</p>
+            <p id="swap-diet-text" style="font-size: 12px; color: var(--text-muted);">Buscando opciones equilibradas para la dieta de tu familia.</p>
         </div>
         <div id="swap-error-box" class="error-text hidden" style="margin-bottom: 12px;"></div>
         <div id="swap-results-box" class="hidden"></div>
@@ -3393,6 +3800,9 @@ function openSwapDishModal(dish) {
         const resultsBox = document.getElementById('swap-results-box');
 
         try {
+            const curDiet = dietaParaIA(await obtenerDietaFamilia());
+            const dietText = document.getElementById('swap-diet-text');
+            if (dietText) dietText.innerText = `Buscando opciones equilibradas para dieta ${curDiet}.`;
             const { data, error } = await supabase.functions.invoke('generate-menu', {
                 body: {
                     action: 'swap_dish',
@@ -3440,27 +3850,18 @@ function openSwapDishModal(dish) {
             `;
 
             resultsBox.querySelectorAll('.btn-select-alt').forEach((btn) => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const chosen = data.alternatives[Number(btn.dataset.altIdx)];
                     if (!chosen) return;
-                    const state = getAppState();
-                    state.menu = state.menu.map((m) => {
-                        if (m.id === dish.id || (m.dia === dish.dia && m.tipo === dish.tipo)) {
-                            return {
-                                ...m,
-                                nombre: chosen.nombre,
-                                tiempo: chosen.tiempo || '25 min',
-                                ingredientes: Array.isArray(chosen.ingredientes) ? chosen.ingredientes : []
-                            };
-                        }
-                        return m;
-                    });
-                    saveAppState(state);
-                    persistMenuToSupabase(state.menu);
-                    showToast(`✨ ¡Plato cambiado a "${chosen.nombre}"!`);
                     closeModal();
-                    if (currentView === 'menus') renderMenuView();
-                    else if (currentView === 'dashboard') renderDashboard(viewRenderId);
+                    const ok = await guardarPlatoEnMenu({
+                        dia: dish.dia,
+                        tipo: dish.tipo,
+                        nombre: chosen.nombre,
+                        tiempo: chosen.tiempo || '25 min',
+                        ingredientes: listaDeTextos(chosen.ingredientes)
+                    });
+                    if (ok) showToast(`✨ ¡Plato cambiado a "${chosen.nombre}"!`);
                 });
             });
         } catch (err) {
@@ -3637,12 +4038,14 @@ function openFridgeModal() {
             }
         } catch (callErr) {
             console.warn('IA no disponible en nevera o tiempo excedido, usando recetas curadas de aprovechamiento:', callErr);
-            recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
+            recipes = null;
         }
 
         try {
-            if (!Array.isArray(recipes) || !recipes.length) {
+            const recetasDelChef = !Array.isArray(recipes) || !recipes.length;
+            if (recetasDelChef) {
                 recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
+                showToast('No se pudo usar la IA; te proponemos recetas del chef.');
             }
 
             statusBox?.classList.add('hidden');
@@ -3665,11 +4068,11 @@ function openFridgeModal() {
                             </div>
                             <p class="fridge-recipe-desc">${escapeHtml(r.descripcion || '')}</p>
                             <div style="font-size: 12px; margin-bottom: 6px;">
-                                <strong>Aprovecha:</strong> ${escapeHtml(Array.isArray(r.ingredientes_usados) ? r.ingredientes_usados.join(', ') : '')}
+                                <strong>Aprovecha:</strong> ${escapeHtml(listaDeTextos(r.ingredientes_usados).join(', '))}
                             </div>
-                            ${r.ingredientes_extra?.length ? `
+                            ${listaDeTextos(r.ingredientes_extra).length ? `
                                 <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-                                    <strong>Básicos extra:</strong> ${escapeHtml(r.ingredientes_extra.join(', '))}
+                                    <strong>Básicos extra:</strong> ${escapeHtml(listaDeTextos(r.ingredientes_extra).join(', '))}
                                 </div>
                             ` : ''}
                             <ol class="fridge-steps-list">
@@ -3695,34 +4098,21 @@ function openFridgeModal() {
             });
 
             resultsContainer.querySelectorAll('.btn-assign-fridge').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const r = recipes[Number(btn.dataset.fridgeIdx)];
                     const tipo = btn.dataset.assignType;
                     if (!r) return;
 
-                    const state = getAppState();
-                    const existingIdx = state.menu.findIndex(m => m.dia === todayName && m.tipo === tipo);
-                    const newMeal = {
-                        id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
+                    closeModal();
+                    const ok = await guardarPlatoEnMenu({
                         dia: todayName,
                         tipo,
                         nombre: r.nombre,
                         tiempo: r.tiempo || '25 min',
-                        ingredientes: Array.isArray(r.ingredientes_usados) ? [...r.ingredientes_usados, ...(r.ingredientes_extra || [])] : []
-                    };
-
-                    if (existingIdx >= 0) {
-                        state.menu[existingIdx] = newMeal;
-                    } else {
-                        state.menu.push(newMeal);
-                    }
-
-                    saveAppState(state);
-                    persistMenuToSupabase(state.menu);
-                    showToast(`🍽️ "${r.nombre}" asignado a la ${tipo.toLowerCase()} de hoy!`);
-                    closeModal();
-                    if (currentView === 'dashboard') renderDashboard(viewRenderId);
-                    else if (currentView === 'menus') renderMenuView();
+                        // ingredientes_extra puede llegar como texto: nunca se trocea en caracteres.
+                        ingredientes: [...listaDeTextos(r.ingredientes_usados), ...listaDeTextos(r.ingredientes_extra)]
+                    });
+                    if (ok) showToast(`🍽️ "${r.nombre}" asignado a la ${tipo.toLowerCase()} de hoy!`);
                 });
             });
 
@@ -3839,17 +4229,15 @@ async function openSupermarketMode() {
         overlay.querySelectorAll('[data-sm-toggle]').forEach(card => {
             card.addEventListener('click', () => {
                 const id = card.dataset.smToggle;
-                const curState = getAppState();
-                const item = curState.shopping.find(i => i.id === id);
+                const item = getAppState().shopping.find(i => i.id === id);
                 if (!item) return;
-                item.comprado = !item.comprado;
-                saveAppState(curState);
-                persistShoppingItemToSupabase(item, 'update');
-                renderSupermarketContent();
+                // marcarProductoComprado repinta el supermercado (overlay.refrescar) y revierte si falla.
+                marcarProductoComprado(id, !item.comprado);
             });
         });
     }
 
+    overlay.refrescar = renderSupermarketContent;
     renderSupermarketContent();
     document.body.appendChild(overlay);
 }
@@ -3949,12 +4337,11 @@ function openPantryReviewModal() {
         chks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); });
     });
 
-    document.getElementById('btn-confirm-pantry-to-shop')?.addEventListener('click', () => {
+    document.getElementById('btn-confirm-pantry-to-shop')?.addEventListener('click', async () => {
         const toAdd = [];
         chks.forEach(c => {
             if (c.checked) {
                 toAdd.push({
-                    id: crypto.randomUUID(),
                     nombre: c.dataset.name,
                     seccion: c.dataset.seccion,
                     comprado: false
@@ -3962,21 +4349,18 @@ function openPantryReviewModal() {
             }
         });
 
-        if (toAdd.length) {
-            const curState = getAppState();
-            toAdd.forEach(newIt => {
-                const exists = curState.shopping.some(s => s.nombre.toLowerCase() === newIt.nombre.toLowerCase() && !s.comprado);
-                if (!exists) {
-                    curState.shopping.push(newIt);
-                    persistShoppingItemToSupabase(newIt, 'upsert');
-                }
-            });
-            saveAppState(curState);
-            showToast(`¡Añadidos ${toAdd.length} artículos a la lista de compra!`);
-        } else {
-            showToast('¡Todo listo! Tienes todos los ingredientes en casa.');
-        }
         closeModal();
+        if (!toAdd.length) {
+            showToast('¡Todo listo! Tienes todos los ingredientes en casa.');
+            return;
+        }
+        const added = await anadirProductosACompra(toAdd);
+        if (added > 0) {
+            const repetidos = toAdd.length - added;
+            showToast(`¡Añadido${added === 1 ? '' : 's'} ${added} artículo${added === 1 ? '' : 's'} a la lista de compra!${repetidos > 0 ? ` (${repetidos} ya estaba${repetidos === 1 ? '' : 'n'} en la lista)` : ''}`);
+        } else if (added === 0) {
+            showToast('Todo lo marcado ya estaba en la lista de compra.');
+        }
     });
 }
 
@@ -4014,7 +4398,7 @@ function getClientCuratedMenu(dieta = 'Mediterránea') {
 }
 
 function openAIGeneratorModal() {
-    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
+    const curDiet = dietaFamiliaCache.familiaId === currentProfile?.familia_id ? dietaParaIA(dietaFamiliaCache.dieta) : 'Mediterránea';
     const html = `
         <div class="modal-header">
             <h3>✨ Generar Menú Semanal con IA</h3>
@@ -4029,8 +4413,8 @@ function openAIGeneratorModal() {
             <select id="ai-dieta" class="input-select">
                 <option value="Mediterránea" ${curDiet === 'Mediterránea' ? 'selected' : ''}>Dieta Mediterránea equilibrada</option>
                 <option value="Vegetariana" ${curDiet === 'Vegetariana' ? 'selected' : ''}>Vegetariana (sin carne ni pescado)</option>
-                <option value="Saludable y ligera">Baja en grasas, saludable y ligera</option>
-                <option value="Familiar con niños">Platos caseros que encantan a niños</option>
+                <option value="Saludable y ligera" ${curDiet === 'Saludable y ligera' ? 'selected' : ''}>Baja en grasas, saludable y ligera</option>
+                <option value="Familiar con niños" ${curDiet === 'Familiar con niños' ? 'selected' : ''}>Platos caseros que encantan a niños</option>
             </select>
 
             <label for="ai-preferencias">Preferencias o ingredientes deseados (opcional)</label>
@@ -4052,6 +4436,13 @@ function openAIGeneratorModal() {
 
     openModal(html);
 
+    // Si la dieta de la familia aún no estaba en caché, la cargamos y la preseleccionamos.
+    obtenerDietaFamilia().then((dietaFamilia) => {
+        const select = document.getElementById('ai-dieta');
+        if (select && !select.dataset.tocado) select.value = dietaParaIA(dietaFamilia);
+    });
+    document.getElementById('ai-dieta')?.addEventListener('change', (e) => { e.target.dataset.tocado = '1'; });
+
     document.getElementById('form-ai-menu')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const statusBox = document.getElementById('ai-status-box');
@@ -4064,6 +4455,8 @@ function openAIGeneratorModal() {
         if (statusBox) statusBox.classList.remove('hidden');
         if (footer) footer.classList.add('hidden');
 
+        let platos;
+        let deIA = true;
         try {
             const { data, error } = await supabase.functions.invoke('generate-menu', {
                 body: { dieta, preferencias }
@@ -4083,55 +4476,39 @@ function openAIGeneratorModal() {
             if (!Array.isArray(data?.menu) || data.menu.length !== 12) {
                 throw new Error('Gemini no devolvió los 12 platos esperados. Inténtalo de nuevo.');
             }
+            platos = data.menu;
+        } catch (err) {
+            console.warn('IA no disponible en este momento, usando menú seleccionado del chef:', err);
+            // Fallback de alta resiliencia: si Gemini está sobrecargado (503/429) o hay error de red
+            platos = getClientCuratedMenu(dieta);
+            deIA = false;
+        }
 
-            const state = getAppState();
-            state.menu = data.menu.map(m => ({
-                id: crypto.randomUUID(),
-                dia: m.dia,
-                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
-            saveAppState(state);
-            persistMenuToSupabase(state.menu);
+        const ok = await guardarMenuCompleto(platos.map(m => ({ ...m, ingredientes: listaDeTextos(m.ingredientes) })));
+        if (!ok) {
+            if (statusBox) statusBox.classList.add('hidden');
+            if (footer) footer.classList.remove('hidden');
+            if (errorBox) {
+                errorBox.innerText = 'No se pudo guardar el menú en la tribu. Revisa tu conexión e inténtalo de nuevo.';
+                errorBox.classList.remove('hidden');
+            }
+            return;
+        }
 
-            showToast('¡Menú semanal creado con éxito!');
-            closeModal();
-            renderMenuView();
+        showToast(deIA ? '¡Menú semanal creado con éxito!' : 'No se pudo usar la IA; te proponemos un menú del chef.');
+        closeModal();
+        if (currentView !== 'menus') renderizarVista('menus');
 
+        if (deIA) {
             showServiceWorkerNotification('🍽️ ¡Nuevo menú semanal listo!', {
                 body: `Se ha planificado el menú de la tribu (${dieta}) con 12 platos equilibrados.`,
                 data: { view: 'menus', url: './' }
             });
-
-            setTimeout(() => {
-                openPantryReviewModal();
-            }, 600);
-        } catch (err) {
-            console.warn('IA no disponible en este momento, usando menú seleccionado del chef:', err);
-            // Fallback de alta resiliencia: si Gemini está sobrecargado (503/429) o hay error de red
-            const curated = getClientCuratedMenu(dieta);
-            const state = getAppState();
-            state.menu = curated.map(m => ({
-                id: crypto.randomUUID(),
-                dia: m.dia,
-                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
-            saveAppState(state);
-            persistMenuToSupabase(state.menu);
-
-            showToast('Menú del chef cargado con éxito');
-            closeModal();
-            renderMenuView();
-
-            setTimeout(() => {
-                openPantryReviewModal();
-            }, 600);
         }
+
+        setTimeout(() => {
+            openPantryReviewModal();
+        }, 600);
     });
 }
 
@@ -4285,10 +4662,20 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
             </div>
         </form>
 
+        ${state.menu.length ? '' : `
+            <div class="panel" style="text-align: center; margin-bottom: 14px;">
+                <p style="font-size: 28px; margin: 0;">🍽️</p>
+                <h4 style="margin: 6px 0 4px;">Todavía no hay menú esta semana</h4>
+                <p class="local-note" style="margin-bottom: 12px;">Genera un menú semanal completo en un momento o añade los platos a mano.</p>
+                <button type="button" id="btn-empty-generate-menu" class="btn-primary btn-ai">✨ Generar menú semanal</button>
+            </div>
+        `}
+
         <div class="weekly-days-list">
             ${daysHtml}
         </div>
     `;
+    document.getElementById('btn-empty-generate-menu')?.addEventListener('click', openAIGeneratorModal);
     addBackupControls(mainContent);
 
     if (prefillDia) {
@@ -4324,7 +4711,7 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
         document.getElementById('menu-form').classList.add('hidden');
     });
 
-    document.getElementById('menu-form').addEventListener('submit', (event) => {
+    document.getElementById('menu-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         const nombre = document.getElementById('menu-nombre').value.trim().slice(0, 120);
         const dia = document.getElementById('menu-dia').value;
@@ -4338,19 +4725,10 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
             return;
         }
 
-        const state = getAppState();
-        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
-        const newMeal = { id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(), nombre, dia, tipo, tiempo, ingredientes };
-        if (existingIdx >= 0) {
-            state.menu[existingIdx] = newMeal;
-        } else {
-            state.menu.push(newMeal);
-        }
-        if (!saveAppState(state)) return;
-        persistMenuToSupabase(state.menu);
         document.getElementById('menu-form').reset();
-        showToast('Plato guardado');
-        renderMenuView();
+        if (await guardarPlatoEnMenu({ nombre, dia, tipo, tiempo, ingredientes })) {
+            showToast('Plato guardado');
+        }
     });
 
     mainContent.querySelectorAll('[data-view-recipe]').forEach((button) => {
@@ -4370,19 +4748,7 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
 
     mainContent.querySelectorAll('[data-delete-menu]').forEach((button) => {
         button.addEventListener('click', () => {
-            const state = getAppState();
-            const deletedDish = state.menu.find((item) => item.id === button.dataset.deleteMenu);
-            state.menu = state.menu.filter((item) => item.id !== button.dataset.deleteMenu);
-            if (!saveAppState(state)) return;
-            if (deletedDish && currentProfile?.familia_id) {
-                supabase.from('familias_menus')
-                    .delete()
-                    .eq('familia_id', currentProfile.familia_id)
-                    .eq('dia', deletedDish.dia)
-                    .eq('tipo', deletedDish.tipo)
-                    .then();
-            }
-            renderMenuView();
+            eliminarPlatoDelMenu(button.dataset.deleteMenu);
         });
     });
 }
@@ -4458,7 +4824,9 @@ function renderCompraView() {
     });
 
     if (!aislesHtml) {
-        aislesHtml = '<p class="empty-state">La lista está vacía. ¡Todo comprado o despensa llena!</p>';
+        aislesHtml = totalItems
+            ? '<p class="empty-state">La lista está vacía. ¡Todo comprado o despensa llena!</p>'
+            : '<p class="empty-state">Todavía no hay nada en la lista. Añade productos con «+ Producto» o tráelos del menú.</p>';
     }
 
     mainContent.innerHTML = `
@@ -4578,58 +4946,26 @@ function renderCompraView() {
             document.getElementById('nueva-compra').reportValidity();
             return;
         }
-        const newItem = { id: crypto.randomUUID(), nombre, cantidad, seccion, comprado: false };
-        state.shopping.push(newItem);
-        if (!saveAppState(state)) return;
-        persistShoppingItemToSupabase(newItem, 'upsert');
-        renderCompraView();
+        anadirProductosACompra([{ nombre, cantidad, seccion }]);
     });
 
     document.getElementById('nueva-compra').addEventListener('input', (event) => event.target.setCustomValidity(''));
 
     mainContent.querySelectorAll('[data-toggle-shopping]').forEach((input) => {
         input.addEventListener('change', () => {
-            const state = getAppState();
-            let updatedItem = null;
-            state.shopping = state.shopping.map((item) => {
-                if (item.id === input.dataset.toggleShopping) {
-                    updatedItem = { ...item, comprado: input.checked };
-                    return updatedItem;
-                }
-                return item;
-            });
-            if (!saveAppState(state)) return;
-            if (updatedItem) {
-                persistShoppingItemToSupabase(updatedItem, 'update');
-            }
-            renderCompraView();
+            marcarProductoComprado(input.dataset.toggleShopping, input.checked);
         });
     });
 
     mainContent.querySelectorAll('[data-delete-shopping]').forEach((button) => {
         button.addEventListener('click', () => {
-            const id = button.dataset.deleteShopping;
-            const state = getAppState();
-            state.shopping = state.shopping.filter((item) => item.id !== id);
-            if (!saveAppState(state)) return;
-            persistShoppingItemToSupabase({ id }, 'delete');
-            renderCompraView();
+            eliminarProductosDeCompra([button.dataset.deleteShopping]);
         });
     });
 
-    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', async () => {
-        const state = getAppState();
-        const removedIds = state.shopping.filter((item) => item.comprado).map((item) => item.id);
-        state.shopping = state.shopping.filter((item) => !item.comprado);
-        if (!saveAppState(state)) return;
-        if (currentProfile?.familia_id && removedIds.length > 0) {
-            try {
-                await supabase.from('familias_compras').delete().in('id', removedIds);
-            } catch (err) {
-                console.warn('Error borrando comprados en Supabase:', err);
-            }
-        }
-        renderCompraView();
+    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', () => {
+        const removedIds = getAppState().shopping.filter((item) => item.comprado).map((item) => item.id);
+        eliminarProductosDeCompra(removedIds);
     });
 }
 
@@ -4639,7 +4975,7 @@ function addBackupControls(container) {
     container.insertAdjacentHTML('beforeend', `
         <section class="panel backup-panel" aria-labelledby="backup-title">
             <h4 id="backup-title">Copia de seguridad</h4>
-            <p>El menú y la compra se guardan en este dispositivo. Descarga una copia para conservarlos o moverlos.</p>
+            <p>El menú y la compra se guardan en tu tribu y se comparten con todos sus miembros. Descarga una copia para conservarlos o restaurarlos más adelante.</p>
             <div class="form-actions">
                 <button type="button" id="btn-export-backup" class="btn-secondary">Descargar copia</button>
                 <button type="button" id="btn-import-backup" class="btn-secondary">Restaurar copia</button>
@@ -4683,19 +5019,38 @@ function addBackupControls(container) {
             }
             const backup = JSON.parse(await file.text());
             const restoredState = validateBackup(backup);
-            if (!window.confirm('Restaurar una copia sustituirá el menú y la lista de compra actuales de esta tribu. ¿Quieres continuar?')) {
+            if (!window.confirm('Restaurar una copia sustituirá el menú y la lista de compra actuales de toda la tribu. ¿Quieres continuar?')) {
                 status.innerText = 'Restauración cancelada.';
                 return;
             }
+            status.innerText = 'Restaurando la copia en la tribu...';
+            // Ids nuevos: la copia puede venir de otro dispositivo, de otra tribu o de la demo.
+            restoredState.shopping = restoredState.shopping.map(item => ({ ...item, id: crypto.randomUUID() }));
+            // En la tribu sólo cabe un plato por día y tipo: si la copia trae varios, gana el último.
+            restoredState.menu = Array.from(new Map(restoredState.menu.map(m => [`${m.dia}|${m.tipo}`, m])).values());
+            const previousState = getAppState();
             if (!saveAppState(restoredState)) {
                 status.innerText = 'No se pudo guardar la copia en este dispositivo.';
                 status.classList.add('error-text');
                 return;
             }
-            if (currentView === 'menus') renderMenuView();
-            if (currentView === 'compra') renderCompraView();
+            const uploadError = await restaurarCopiaEnSupabase(restoredState);
+            if (uploadError) {
+                // Sin guardar en la tribu, la copia no se aplica: volvemos al estado anterior.
+                saveAppState(previousState);
+                await syncFamilyDataFromSupabase();
+                refrescarVistasDeDatos({ forzar: true });
+                mostrarErrorGuardado('No se pudo restaurar la copia en la tribu.', uploadError);
+                const failedStatus = document.getElementById('backup-status');
+                if (failedStatus) {
+                    failedStatus.innerText = 'No se pudo completar la restauración en la tribu. Se muestran los datos que hay ahora en la tribu; inténtalo de nuevo.';
+                    failedStatus.classList.add('error-text');
+                }
+                return;
+            }
+            refrescarVistasDeDatos({ forzar: true });
             const refreshedStatus = document.getElementById('backup-status');
-            refreshedStatus.innerText = 'Copia restaurada correctamente.';
+            if (refreshedStatus) refreshedStatus.innerText = 'Copia restaurada correctamente en la tribu.';
         } catch (error) {
             const currentStatus = document.getElementById('backup-status');
             currentStatus.innerText = `No se pudo restaurar la copia: ${error.message}`;
