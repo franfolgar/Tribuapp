@@ -2,7 +2,7 @@
 
 # Tribuapp
 
-PWA de organización familiar: menú semanal, lista de la compra, tareas recurrentes y miembros de la familia. Frontend vanilla JS (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.json`) sobre Supabase. Servidor Express (`server.js`) que sirve la app y hace de proxy a Gemini.
+PWA de organización familiar: menú semanal, lista de la compra, tareas recurrentes y miembros de la familia. Frontend vanilla JS (`index.html`, `app.js`, `style.css`, `sw.js`, `manifest.json`) sobre Supabase. Servidor Express (`server.js`) que sólo sirve la app; la IA va por la Edge Function de Supabase.
 
 ## Comandos
 - `npm install`
@@ -17,7 +17,8 @@ PWA de organización familiar: menú semanal, lista de la compra, tareas recurre
 - `app.js` lleva la URL y la *anon key* de Supabase. Son públicas por diseño: la seguridad depende de las políticas RLS. No pongas nunca la *service role key* en el frontend.
 
 ## Configuración
-`.env` (no versionado): `PORT`, `GEMINI_API_KEY`.
+`.env` (no versionado): `PORT`. `GEMINI_API_KEY` es un secreto de la Edge Function en Supabase, no del servidor.
+`vendor/supabase-js.mjs` es supabase-js empaquetado con versión fija; `vendor/README.md` explica cómo regenerarlo.
 
 ## Notas
 - Repo **público**.
