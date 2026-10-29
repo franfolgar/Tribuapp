@@ -323,6 +323,10 @@ input[type="checkbox"]:focus {
     font-size: 1.2rem;
     font-weight: bold;
     min-width: 0;
+    /* El título (corto) no se encoge; el chip de la tribu cede antes */
+    flex: 0 1 auto;
+    flex-shrink: 0;
+    max-width: 100%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2422,7 +2426,7 @@ button.chip {
 .supermarket-item-card.done {
     background: var(--card-secondary-bg);
     border-color: rgba(16, 185, 129, 0.2);
-    opacity: 0.65;
+    opacity: 0.85;
 }
 
 .supermarket-item-card.done .supermarket-checkbox {
