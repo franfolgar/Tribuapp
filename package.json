@@ -10,7 +10,6 @@
     "lint": "node --check app.js server.js"
   },
   "dependencies": {
-    "@google/genai": "^2.27.0",
     "express": "^4.21.2",
     "puppeteer-core": "^25.13.0"
   }
