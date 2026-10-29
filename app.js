@@ -1274,13 +1274,13 @@ function getPendingInvite() {
     try {
         let params = new URLSearchParams(window.location.search);
         let token = params.get('invite');
-        let tribu = params.get('tribu');
+        // El parámetro `tribu` de la URL se ignora: es falsificable. El nombre real de la familia
+        // se obtiene del servidor con ver_invitacion_familia antes de aceptar.
 
         if (!token && window.location.hash && window.location.hash.includes('?')) {
             const hashSearch = window.location.hash.substring(window.location.hash.indexOf('?'));
             params = new URLSearchParams(hashSearch);
             token = params.get('invite');
-            tribu = params.get('tribu');
         }
 
         if (params.has('join')) {
@@ -1292,10 +1292,7 @@ function getPendingInvite() {
             return null;
         }
         if (token && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-            const invite = {
-                token,
-                tribuName: tribu || 'Familia'
-            };
+            const invite = { token };
             sessionStorage.setItem('tribuapp_pending_invite', JSON.stringify(invite));
             return invite;
         }
@@ -1312,14 +1309,14 @@ function getPendingInvite() {
 function setupInviteAuthUI(pendingInvite) {
     authMode = 'invite_join';
     if (inviteWelcomeBanner && inviteWelcomeText) {
-        inviteWelcomeText.innerHTML = `<strong>👋 ¡Bienvenido/a a la tribu "${escapeHtml(pendingInvite.tribuName)}"!</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95;">Crea tu acceso para unirte a la familia en 1 clic:</span>`;
+        inviteWelcomeText.innerHTML = `<strong>👋 Te han invitado a una tribu de Tribuapp</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95;">Crea tu acceso o inicia sesión. Antes de unirte verás el nombre de la familia y quién te invita.</span>`;
         inviteWelcomeBanner.classList.remove('hidden');
     }
     if (authNameGroup) {
         authNameGroup.classList.remove('hidden');
         if (authMemberNameInput) authMemberNameInput.required = true;
     }
-    btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+    btnSubmit.innerText = '✨ Crear acceso y ver la invitación';
     btnSubmit.style.background = 'linear-gradient(135deg, #10B981, #059669)';
     btnAuthMode.innerText = '¿Ya tienes cuenta en Tribuapp? Inicia sesión aquí';
     btnDemoLogin?.classList.add('hidden');
@@ -1358,17 +1355,11 @@ function detectPasswordRecoveryState() {
         return false;
     }
 
-    // 2. Comprobar si es un flujo de recuperación de contraseña (type=recovery o contiene tokens)
-    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
-        isPasswordRecovery = true;
-        return true;
-    }
-    if (hash.includes('access_token=') && (hash.includes('refresh_token=') || hash.includes('token_type='))) {
-        isPasswordRecovery = true;
-        return true;
-    }
-
-    return false;
+    // 2. ¿Es un enlace de recuperación de contraseña? Sólo se usa para no mostrar el dashboard
+    // mientras supabase-js (detectSessionInUrl) valida los tokens; la sesión NUNCA se crea a mano
+    // con los tokens de la URL. El formulario se abre con el evento PASSWORD_RECOVERY o si el SDK
+    // ha validado una sesión para este enlace.
+    return hash.includes('type=recovery') || search.includes('type=recovery');
 }
 
 function showPasswordUpdateForm(user = null) {
@@ -1437,58 +1428,31 @@ async function checkSession() {
     const isRecoveryUrl = detectPasswordRecoveryState();
 
     try {
-        let { data: { session }, error } = await supabase.auth.getSession();
-
-        // Si tenemos tokens en la URL pero getSession aún no los tiene (por ejemplo, al pegar URL o volver de redirect)
-        if (!session && isRecoveryUrl) {
-            const rawHash = (window.__INITIAL_HASH__ || window.location.hash || '').replace(/^#/, '');
-            const rawSearch = (window.__INITIAL_SEARCH__ || window.location.search || '').replace(/^\?/, '');
-            const hashParams = new URLSearchParams(rawHash);
-            const searchParams = new URLSearchParams(rawSearch);
-            const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
-            const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
-            const code = searchParams.get('code') || hashParams.get('code');
-
-            if (accessToken) {
-                try {
-                    const setRes = await supabase.auth.setSession({
-                        access_token: accessToken,
-                        refresh_token: refreshToken || ''
-                    });
-                    if (setRes.data?.session) {
-                        session = setRes.data.session;
-                    }
-                } catch (e) {
-                    console.warn('Error al activar sesión desde URL hash:', e);
-                }
-            } else if (code) {
-                try {
-                    const codeRes = await supabase.auth.exchangeCodeForSession(code);
-                    if (codeRes.data?.session) {
-                        session = codeRes.data.session;
-                    }
-                } catch (e) {
-                    console.warn('Error al canjear código PKCE desde URL:', e);
-                }
-            }
-        }
+        // getSession espera a que supabase-js termine de procesar la URL (detectSessionInUrl):
+        // si el enlace era de recuperación válido, emite PASSWORD_RECOVERY y guarda la sesión.
+        const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
-            showAuthError(`No se pudo comprobar la sesión: ${error.message}`);
+            showAuthError(`No se pudo comprobar la sesión: ${traducirErrorAuth(error)}`);
             return;
         }
 
-        // Si la URL es de recuperación o venimos de un evento de contraseña, no saltar al dashboard
         if (isRecoveryUrl || isPasswordRecovery) {
-            setCurrentUser(session?.user || null);
-            showPasswordUpdateForm(session?.user || null);
+            if (session?.user) {
+                showPasswordUpdateForm(session.user);
+            } else {
+                isPasswordRecovery = false;
+                setCurrentUser(null);
+                await mostrarApp();
+                showAuthError('⚠️ El enlace de recuperación ha caducado o ya ha sido utilizado. Solicita un nuevo enlace.');
+            }
             return;
         }
 
         setCurrentUser(session?.user || null);
         await mostrarApp();
     } catch (error) {
-        showAuthError(`No se pudo conectar con Supabase: ${error.message}`);
+        showAuthError(`No se pudo conectar con Supabase: ${traducirErrorAuth(error)}`);
     }
 }
 
@@ -1523,7 +1487,7 @@ btnAuthMode.addEventListener('click', () => {
             authMode = 'login';
             authNameGroup?.classList.add('hidden');
             if (authMemberNameInput) authMemberNameInput.required = false;
-            btnSubmit.innerText = `Iniciar sesión y entrar a ${pendingInvite.tribuName}`;
+            btnSubmit.innerText = 'Iniciar sesión y ver la invitación';
             btnSubmit.style.background = '';
             btnAuthMode.innerText = '¿Es tu primera vez? Crea tu acceso para unirte';
             btnResetPassword?.classList.remove('hidden');
@@ -1636,8 +1600,8 @@ passwordRecoveryRequestForm?.addEventListener('submit', async (e) => {
         let msg = error.message;
         if (error.status === 429 || error.code === 429 || msg?.includes('rate limit') || msg?.includes('security purposes')) {
             msg = 'Por motivos de seguridad, debes esperar aproximadamente un minuto antes de solicitar otro correo de recuperación.';
-        } else if (msg?.includes('fetch') || msg?.includes('network')) {
-            msg = 'Error de conexión. Comprueba tu conexión a internet.';
+        } else {
+            msg = traducirErrorAuth(error);
         }
         if (recoveryRequestError) {
             recoveryRequestError.innerText = `No se pudo enviar el correo: ${msg}`;
@@ -1683,16 +1647,13 @@ async function processRecoveryInput(rawInput) {
     const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
 
     if (accessToken) {
-        const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken || ''
-        });
-        if (error) throw error;
-
-        isPasswordRecovery = true;
-        setCurrentUser(data.user || null);
-        showPasswordUpdateForm(data.user || null);
-        showToast('🔑 ¡Enlace validado con éxito! Elige tu nueva contraseña.');
+        // No se llama a setSession con tokens copiados: se recarga la app con el enlace para que
+        // supabase-js lo valide (detectSessionInUrl) y emita PASSWORD_RECOVERY si es de recuperación.
+        if (!refreshToken || !/type=recovery/.test(hashPart + '&' + searchPart)) {
+            throw new Error('El enlace pegado no es un enlace de recuperación de contraseña.');
+        }
+        history.replaceState(null, '', `${window.location.pathname}#${hashPart}`);
+        window.location.reload();
         return;
     }
 
@@ -1809,7 +1770,7 @@ btnActivatePastedRecovery?.addEventListener('click', async () => {
     } catch (err) {
         console.warn('Error al activar enlace de recuperación:', err);
         if (recoveryPastedError) {
-            recoveryPastedError.innerText = `No se pudo activar: ${err.message || 'Verifica que hayas copiado la dirección completa.'}`;
+            recoveryPastedError.innerText = `No se pudo activar: ${err.message ? traducirErrorAuth(err) : 'Verifica que hayas copiado la dirección completa.'}`;
             recoveryPastedError.classList.remove('hidden');
         }
     } finally {
@@ -1882,6 +1843,8 @@ passwordUpdateForm.addEventListener('submit', async (event) => {
             msg = 'La nueva contraseña no puede ser idéntica a la anterior.';
         } else if (msg.includes('expired') || msg.includes('reauthenticate')) {
             msg = 'La sesión de recuperación ha caducado. Vuelve a solicitar un enlace de recuperación.';
+        } else {
+            msg = traducirErrorAuth(error);
         }
         passwordUpdateError.innerText = `No se pudo actualizar la contraseña: ${msg}`;
         passwordUpdateError.classList.remove('hidden');
@@ -1890,6 +1853,75 @@ passwordUpdateForm.addEventListener('submit', async (event) => {
         submitButton.innerText = 'Guardar nueva contraseña';
     }
 });
+
+// Traduce al español los errores habituales de Supabase Auth.
+function traducirErrorAuth(error) {
+    const raw = String(error?.message || error?.msg || error || '');
+    const code = String(error?.code || error?.error_code || '');
+    const msg = raw.toLowerCase();
+    const status = Number(error?.status) || 0;
+
+    if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
+        return 'Correo o contraseña incorrectos.';
+    }
+    if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
+        return 'Tienes que confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.';
+    }
+    if (code === 'user_already_exists' || code === 'email_exists' || msg.includes('already registered') || msg.includes('user already')) {
+        return 'Ya existe una cuenta con este correo. Inicia sesión.';
+    }
+    if (code === 'weak_password' || msg.includes('password should be') || msg.includes('password is too weak')) {
+        return 'La contraseña es demasiado débil: usa al menos 6 caracteres.';
+    }
+    if (code === 'same_password' || msg.includes('same_password') || msg.includes('should be different')) {
+        return 'La nueva contraseña no puede ser idéntica a la anterior.';
+    }
+    if (code === 'email_address_invalid' || msg.includes('unable to validate email') || msg.includes('invalid format') || msg.includes('email address') && msg.includes('invalid')) {
+        return 'El correo electrónico no es válido.';
+    }
+    if (code === 'signup_disabled' || msg.includes('signups not allowed') || msg.includes('signup is disabled')) {
+        return 'El registro de nuevas cuentas está desactivado.';
+    }
+    if (status === 429 || code.includes('rate_limit') || msg.includes('rate limit') || msg.includes('security purposes') || msg.includes('too many')) {
+        return 'Demasiados intentos. Espera un minuto y vuelve a intentarlo.';
+    }
+    if (code === 'otp_expired' || msg.includes('expired') || msg.includes('token has expired') || msg.includes('invalid or has expired')) {
+        return 'El enlace o la sesión han caducado. Solicita uno nuevo o vuelve a iniciar sesión.';
+    }
+    if (code === 'session_not_found' || msg.includes('auth session missing') || msg.includes('jwt')) {
+        return 'Tu sesión ha caducado. Vuelve a iniciar sesión.';
+    }
+    if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed')) {
+        return 'Error de conexión. Comprueba tu conexión a internet.';
+    }
+    return raw || 'No se pudo completar la operación.';
+}
+
+// Traduce los motivos/errores de invitación (ver_invitacion_familia, aceptar_invitacion_familia).
+function traducirErrorInvitacion(errorOMotivo) {
+    const raw = typeof errorOMotivo === 'string' ? errorOMotivo : String(errorOMotivo?.message || '');
+    const msg = raw.toLowerCase();
+    if (msg.includes('revocad') || msg.includes('revoked') || msg.includes('invalidad')) {
+        return 'El administrador ha invalidado este enlace de invitación. Pide uno nuevo.';
+    }
+    if (msg.includes('agotad') || msg.includes('max_usos') || msg.includes('máximo de usos') || msg.includes('exhausted')) {
+        return 'Este enlace de invitación ya se ha usado el máximo de veces. Pide uno nuevo.';
+    }
+    if (msg.includes('expulsad') || msg.includes('expelled') || msg.includes('banned')) {
+        return 'El administrador te quitó de esta familia, así que no puedes volver a unirte con este enlace.';
+    }
+    if (msg.includes('caducad') || msg.includes('expired')) {
+        return 'La invitación ha caducado. Pide un enlace nuevo al administrador.';
+    }
+    if (msg.includes('no_existe') || msg === 'not_found' || msg.includes('no existe')) {
+        return 'La invitación no existe o ya no está disponible.';
+    }
+    if (msg.includes('otra familia') || msg.includes('otra_familia') || msg.includes('ya pertenece')) {
+        return 'Tu cuenta ya pertenece a otra familia. Pide a su administrador que te quite antes de aceptar otra invitación.';
+    }
+    if (typeof errorOMotivo === 'object' && errorOMotivo) return traducirErrorAuth(errorOMotivo);
+    return raw || 'La invitación no es válida.';
+}
 
 authForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1905,13 +1937,16 @@ authForm.addEventListener('submit', async (event) => {
     if (!email || !password) {
         showAuthError('Debes rellenar correo y contraseña.');
         btnSubmit.disabled = false;
-        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : (authMode === 'invite_join' ? `✨ Unirme a ${pendingInvite?.tribuName || 'la Tribu'}` : 'Iniciar sesión');
+        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : (authMode === 'invite_join' ? '✨ Crear acceso y ver la invitación' : 'Iniciar sesión');
         return;
     }
 
+    // El nombre escrito en el formulario se usa para rellenar la confirmación de la invitación.
+    if (memberName) nombreParaInvitacion = memberName.slice(0, 50);
+
     try {
         if (pendingInvite && authMode === 'invite_join') {
-            btnSubmit.innerText = `Uniéndote a ${pendingInvite.tribuName}...`;
+            btnSubmit.innerText = 'Creando tu acceso...';
             let authUser = null;
 
             // Intento 1: Registro directo
@@ -1929,7 +1964,7 @@ authForm.addEventListener('submit', async (event) => {
                 }
                 if (!authUser) {
                     updateAuthMode('login');
-                    showAuthMessage('Cuenta creada. Confirma tu correo o inicia sesión para unirte a la tribu.');
+                    showAuthMessage('Cuenta creada. Confirma tu correo o inicia sesión para ver la invitación.');
                     return;
                 }
             } else if (signUpError) {
@@ -1950,11 +1985,8 @@ authForm.addEventListener('submit', async (event) => {
                 throw new Error('No se pudo autenticar. Por favor, revisa tus datos.');
             }
 
+            // No se acepta la invitación automáticamente: mostrarApp enseña la confirmación con el nombre real.
             setCurrentUser(authUser);
-
-            // Unión automática instantánea a la familia
-            const joinedFamily = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-            showToast(`🎉 ¡Bienvenido/a a ${joinedFamily?.nombre || pendingInvite.tribuName}!`);
             await mostrarApp();
             return;
         }
@@ -1966,20 +1998,12 @@ authForm.addEventListener('submit', async (event) => {
 
             if (data.session && data.user) {
                 setCurrentUser(data.user);
-                if (pendingInvite) {
-                    const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                    showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-                }
                 await mostrarApp();
             } else if (data.user) {
                 try {
                     const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
                     if (!signErr && signData?.session && signData?.user) {
                         setCurrentUser(signData.user);
-                        if (pendingInvite) {
-                            const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                            showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-                        }
                         await mostrarApp();
                         return;
                     }
@@ -1990,25 +2014,20 @@ authForm.addEventListener('submit', async (event) => {
                 showAuthMessage('Cuenta creada con éxito. Ya puedes iniciar sesión.');
             }
         } else {
-            // Modo login estándar o con invitación
+            // Modo login estándar o con invitación (la invitación se confirma en mostrarApp)
             btnSubmit.innerText = 'Iniciando sesión...';
             const { data, error } = await supabase.auth.signInWithPassword({ email, password });
             if (error) throw error;
             if (!data.user) throw new Error('Supabase no devolvió el usuario autenticado.');
             setCurrentUser(data.user);
-
-            if (pendingInvite) {
-                const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-            }
             await mostrarApp();
         }
     } catch (error) {
-        showAuthError(error.message || 'No se pudo completar la operación.');
+        showAuthError(traducirErrorAuth(error));
     } finally {
         btnSubmit.disabled = false;
         if (pendingInvite && authMode === 'invite_join') {
-            btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+            btnSubmit.innerText = '✨ Crear acceso y ver la invitación';
         } else if (authMode === 'signup') {
             btnSubmit.innerText = 'Crear cuenta';
         } else {
@@ -2017,23 +2036,246 @@ authForm.addEventListener('submit', async (event) => {
     }
 });
 
+// Borra del navegador los datos de la sesión anterior (estado, tareas, puntos, caché de Supabase).
+// Se conservan sólo las preferencias del dispositivo (tema y notificaciones).
+function limpiarDatosLocalesUsuario() {
+    const conservar = new Set([THEME_STORAGE_KEY, PUSH_PREFS_KEY]);
+    try {
+        const claves = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || conservar.has(key)) continue;
+            if (key.startsWith('tribuapp-') || key.startsWith('tribuapp_') || key.startsWith('sb-')) claves.push(key);
+        }
+        claves.forEach((key) => localStorage.removeItem(key));
+    } catch (error) {
+        console.warn('No se pudo limpiar el almacenamiento local:', error);
+    }
+    invitacionVerificada = null;
+    nombreParaInvitacion = '';
+}
+
+function cerrarModoSupermercado() {
+    const smModal = document.getElementById('supermarket-modal');
+    if (!smModal) return;
+    if (supermarketWakeLock) {
+        try { supermarketWakeLock.release(); } catch {}
+        supermarketWakeLock = null;
+    }
+    smModal.remove();
+}
+
+// Deja la app en la pantalla de acceso sin rastro de la sesión anterior.
+function cerrarSesionLocal() {
+    if (typeof detenerSincronizacionTiempoReal === 'function') {
+        try { detenerSincronizacionTiempoReal(); } catch (error) { console.warn(error); }
+    }
+    cerrarModoSupermercado();
+    closeModal();
+    limpiarDatosLocalesUsuario();
+
+    isPasswordRecovery = false;
+    setCurrentUser(null);
+    currentProfile = null;
+    authForm.reset();
+    mainContent.innerHTML = '';
+    authView.classList.remove('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.add('hidden');
+    authError.classList.add('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+    resetStandardAuthUI();
+}
+
 btnLogout.addEventListener('click', async () => {
+    if (typeof detenerSincronizacionTiempoReal === 'function') {
+        try { detenerSincronizacionTiempoReal(); } catch (error) { console.warn(error); }
+    }
     try {
         const { error } = await supabase.auth.signOut();
         if (error) console.warn(error);
     } catch (error) {
         console.warn(error);
     }
-
-    setCurrentUser(null);
-    currentProfile = null;
-    authForm.reset();
-    authView.classList.remove('hidden');
-    onboardingView.classList.add('hidden');
-    appView.classList.add('hidden');
-    authError.classList.add('hidden');
-    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+    descartarInvitacionPendiente();
+    cerrarSesionLocal();
 });
+
+// --- Invitaciones y onboarding ---
+
+let invitacionVerificada = null; // { token, familia_nombre, invitado_por } ya mostrada al usuario
+let nombreParaInvitacion = '';
+
+function descartarInvitacionPendiente() {
+    try {
+        sessionStorage.removeItem('tribuapp_pending_invite');
+    } catch {}
+    invitacionVerificada = null;
+    // Quitar ?invite= de la barra de direcciones para no volver a procesarla al recargar
+    try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('invite') || url.searchParams.has('tribu')) {
+            url.searchParams.delete('invite');
+            url.searchParams.delete('tribu');
+            history.replaceState(null, '', url.pathname + url.search + url.hash);
+        }
+    } catch {}
+}
+
+function normalizarTokenInvitacion(inviteOrToken) {
+    let token = String(inviteOrToken || '').trim();
+    try {
+        if (token.startsWith('http://') || token.startsWith('https://')) {
+            token = new URL(token).searchParams.get('invite') || '';
+        }
+    } catch {
+        throw new Error('El enlace de invitación no es válido.');
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+        throw new Error('Usa un enlace de invitación válido; los códigos antiguos ya no se aceptan.');
+    }
+    return token.toLowerCase();
+}
+
+// Consulta en el servidor a qué familia lleva la invitación (sin aceptarla).
+async function verInvitacion(token) {
+    const { data, error } = await supabase.rpc('ver_invitacion_familia', { p_token: token });
+    if (error) throw new Error(traducirErrorInvitacion(error));
+    const info = Array.isArray(data) ? data[0] : data;
+    if (!info?.valida) {
+        throw new Error(traducirErrorInvitacion(info?.motivo || 'no_existe'));
+    }
+    return {
+        token,
+        familia_nombre: info.familia_nombre || 'Familia',
+        invitado_por: info.invitado_por || '',
+    };
+}
+
+function textoConfirmacionInvitacion(info) {
+    return info.invitado_por
+        ? `¿Unirte a la familia "${info.familia_nombre}", invitado por ${info.invitado_por}?`
+        : `¿Unirte a la familia "${info.familia_nombre}"?`;
+}
+
+// Pinta en el formulario de unirse la confirmación con el nombre real de la familia.
+function mostrarConfirmacionEnOnboarding(info) {
+    invitacionVerificada = info;
+    if (joinInviteTokenInput) joinInviteTokenInput.value = info.token;
+    if (inviteDetectedBanner && inviteDetectedText) {
+        inviteDetectedText.innerText = textoConfirmacionInvitacion(info);
+        inviteDetectedBanner.classList.remove('hidden');
+    }
+    btnJoinTribu.innerText = `Sí, unirme a ${info.familia_nombre}`;
+    document.getElementById('btn-reject-invite')?.classList.remove('hidden');
+}
+
+function resetConfirmacionOnboarding() {
+    invitacionVerificada = null;
+    inviteDetectedBanner?.classList.add('hidden');
+    btnJoinTribu.innerText = 'Unirme a la Tribu';
+    document.getElementById('btn-reject-invite')?.classList.add('hidden');
+}
+
+function mostrarOnboarding(mensajeError = '') {
+    authView.classList.add('hidden');
+    appView.classList.add('hidden');
+    onboardingView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+
+    if (joinNombreInput && !joinNombreInput.value) joinNombreInput.value = nombreParaInvitacion || getFriendlyUserName();
+    const adminNameInput = document.getElementById('tribu-nombre-usuario');
+    if (adminNameInput && !adminNameInput.value) adminNameInput.value = nombreParaInvitacion || getFriendlyUserName();
+
+    if (mensajeError) {
+        onboardingError.innerText = mensajeError;
+        onboardingError.classList.remove('hidden');
+    } else {
+        onboardingError.classList.add('hidden');
+    }
+}
+
+function mostrarTabUnirse() {
+    tabJoinTribu?.classList.add('active');
+    tabCreateTribu?.classList.remove('active');
+    joinTribuForm?.classList.remove('hidden');
+    onboardingForm?.classList.add('hidden');
+}
+
+// Tras crear o unirse a una tribu: descarga los datos de la familia y entra en la app.
+async function entrarEnTribu() {
+    descartarInvitacionPendiente();
+    resetConfirmacionOnboarding();
+    onboardingView.classList.add('hidden');
+    authView.classList.add('hidden');
+    appView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+    await syncFamilyDataFromSupabase();
+    await renderizarVista('dashboard');
+}
+
+// Procesa una invitación abierta desde ?invite=TOKEN: muestra a qué familia lleva y quién invita
+// y sólo la acepta si el usuario lo confirma.
+async function procesarInvitacionPendiente(pendingInvite, profile) {
+    let info;
+    try {
+        info = await verInvitacion(normalizarTokenInvitacion(pendingInvite.token));
+    } catch (error) {
+        descartarInvitacionPendiente();
+        const mensaje = `Invitación no válida: ${error.message}`;
+        if (profile?.familia_id) {
+            await entrarEnTribu();
+            showToast(`⚠️ ${mensaje}`);
+        } else {
+            resetConfirmacionOnboarding();
+            mostrarTabUnirse();
+            mostrarOnboarding(mensaje);
+        }
+        return;
+    }
+
+    if (!profile?.familia_id) {
+        mostrarTabUnirse();
+        mostrarOnboarding();
+        mostrarConfirmacionEnOnboarding(info);
+        return;
+    }
+
+    // Ya pertenece a una familia: entrar en la app y preguntar en un modal.
+    await entrarEnTribu();
+    openModal(`
+        <div class="modal-header">
+            <h3>⛺ Invitación a una tribu</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p id="invite-confirm-text" style="margin-bottom: 8px;"></p>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">Si ya perteneces a otra familia, su administrador tendrá que quitarte antes de que puedas unirte.</p>
+        <div class="modal-footer">
+            <button type="button" id="btn-accept-invite-modal" class="btn-primary"></button>
+            <button type="button" id="btn-reject-invite-modal" class="btn-secondary">No, gracias</button>
+        </div>
+    `);
+    document.getElementById('invite-confirm-text').innerText = textoConfirmacionInvitacion(info);
+    const acceptBtn = document.getElementById('btn-accept-invite-modal');
+    acceptBtn.innerText = `Sí, unirme a ${info.familia_nombre}`;
+    document.getElementById('btn-reject-invite-modal')?.addEventListener('click', () => {
+        closeModal();
+        showToast('Invitación descartada');
+    });
+    acceptBtn.addEventListener('click', async () => {
+        acceptBtn.disabled = true;
+        acceptBtn.innerText = 'Uniéndote...';
+        try {
+            const family = await handleJoinTribu(info.token, profile.nombre || getFriendlyUserName());
+            closeModal();
+            showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
+            await entrarEnTribu();
+        } catch (error) {
+            closeModal();
+            showToast(`⚠️ No se pudo aceptar la invitación: ${error.message}`);
+        }
+    });
+}
 
 async function mostrarApp() {
     if (isPasswordRecovery) {
@@ -2063,68 +2305,30 @@ async function mostrarApp() {
         .eq('id', currentUser.id)
         .maybeSingle();
 
+    // Si mientras tanto se abrió un enlace de recuperación, no pisar el formulario de nueva contraseña
+    if (isPasswordRecovery) return;
+
     if (error) {
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
         authView.classList.remove('hidden');
-        showAuthError(`No se pudo cargar tu perfil: ${error.message}`);
+        showAuthError(`No se pudo cargar tu perfil: ${traducirErrorAuth(error)}`);
         return;
     }
 
     currentProfile = profile;
-    if (!profile) {
-        // Si hay una invitación pendiente, unirse automáticamente sin pantallas intermedias
-        if (pendingInvite) {
-            try {
-                const joined = await handleJoinTribu(pendingInvite.token, getFriendlyUserName());
-                showToast(`🎉 ¡Bienvenido/a a "${joined?.nombre || pendingInvite.tribuName}"!`);
-                onboardingView.classList.add('hidden');
-                appView.classList.remove('hidden');
-                if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-                renderizarVista('dashboard');
-                return;
-            } catch (autoErr) {
-                console.warn('Auto-join failed, mostrando onboarding manual:', autoErr);
-                if (onboardingError) {
-                    onboardingError.innerText = autoErr.message || 'No se pudo aceptar la invitación.';
-                    onboardingError.classList.remove('hidden');
-                }
-            }
-        }
+    if (profile?.nombre && !nombreParaInvitacion) nombreParaInvitacion = profile.nombre;
 
-        onboardingView.classList.remove('hidden');
-        appView.classList.add('hidden');
-
-        // Pre-configurar onboarding basado en la invitación
-        if (pendingInvite) {
-            tabJoinTribu?.classList.add('active');
-            tabCreateTribu?.classList.remove('active');
-            joinTribuForm?.classList.remove('hidden');
-            onboardingForm?.classList.add('hidden');
-            if (joinInviteTokenInput) joinInviteTokenInput.value = pendingInvite.token;
-            if (joinNombreInput) joinNombreInput.value = getFriendlyUserName();
-            if (inviteDetectedBanner && inviteDetectedText) {
-                inviteDetectedText.innerText = `Te estás uniendo a la tribu "${pendingInvite.tribuName}" mediante una invitación segura.`;
-                inviteDetectedBanner.classList.remove('hidden');
-            }
-        } else {
-            inviteDetectedBanner?.classList.add('hidden');
-        }
+    if (pendingInvite) {
+        await procesarInvitacionPendiente(pendingInvite, profile);
         return;
     }
 
-    // Si el usuario ya tenía perfil pero abre un enlace de otra tribu diferente
-    if (pendingInvite) {
-        try {
-            const joined = await handleJoinTribu(pendingInvite.token, profile.nombre);
-            showToast(`🎉 ¡Te has unido a "${joined.nombre}"!`);
-        } catch (err) {
-            authView.classList.remove('hidden');
-            appView.classList.add('hidden');
-            onboardingView.classList.add('hidden');
-            showAuthError(err.message || 'No se pudo aceptar la invitación.');
-            return;
-        }
+    // Sin perfil o expulsado de su familia (familia_id NULL): crear una tribu o unirse a otra
+    if (!profile || !profile.familia_id) {
+        resetConfirmacionOnboarding();
+        mostrarOnboarding();
+        return;
     }
 
     onboardingView.classList.add('hidden');
@@ -2137,23 +2341,13 @@ async function mostrarApp() {
 async function handleJoinTribu(inviteOrToken, memberName) {
     if (!currentUser) throw new Error('Debes haber iniciado sesión');
 
-    let token = String(inviteOrToken || '').trim();
-    try {
-        if (token.startsWith('http://') || token.startsWith('https://')) {
-            token = new URL(token).searchParams.get('invite') || '';
-        }
-    } catch {
-        throw new Error('El enlace de invitación no es válido.');
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-        throw new Error('Usa un enlace de invitación válido; los códigos antiguos ya no se aceptan.');
-    }
+    const token = normalizarTokenInvitacion(inviteOrToken);
 
     const { data, error } = await supabase.rpc('aceptar_invitacion_familia', {
         p_token: token,
-        p_nombre: memberName || getFriendlyUserName(),
+        p_nombre: (memberName || getFriendlyUserName()).slice(0, 50),
     });
-    if (error) throw error;
+    if (error) throw new Error(traducirErrorInvitacion(error));
 
     const profile = Array.isArray(data) ? data[0] : data;
     if (!profile?.familia_id || !profile?.familia_nombre) {
@@ -2166,7 +2360,7 @@ async function handleJoinTribu(inviteOrToken, memberName) {
         nombre: profile.nombre,
         rol: profile.rol,
     };
-    sessionStorage.removeItem('tribuapp_pending_invite');
+    descartarInvitacionPendiente();
     return { id: profile.familia_id, nombre: profile.familia_nombre };
 }
 
@@ -2186,28 +2380,51 @@ tabCreateTribu?.addEventListener('click', () => {
     onboardingError.classList.add('hidden');
 });
 
+// Si se cambia el enlace pegado, hay que volver a confirmar a qué familia lleva
+joinInviteTokenInput?.addEventListener('input', () => {
+    if (invitacionVerificada && joinInviteTokenInput.value.trim() !== invitacionVerificada.token) {
+        resetConfirmacionOnboarding();
+    }
+});
+
+document.getElementById('btn-reject-invite')?.addEventListener('click', () => {
+    descartarInvitacionPendiente();
+    resetConfirmacionOnboarding();
+    if (joinInviteTokenInput) joinInviteTokenInput.value = '';
+    onboardingError.classList.add('hidden');
+    showToast('Invitación descartada');
+});
+
 joinTribuForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     onboardingError.classList.add('hidden');
     btnJoinTribu.disabled = true;
-    btnJoinTribu.innerText = 'Uniéndote...';
+    btnJoinTribu.innerText = 'Comprobando...';
 
-    const inviteToken = joinInviteTokenInput.value.trim();
-    const nombre = joinNombreInput.value.trim() || getFriendlyUserName();
+    const nombre = (joinNombreInput.value.trim() || getFriendlyUserName()).slice(0, 50);
+    let confirmando = false;
 
     try {
-        const family = await handleJoinTribu(inviteToken, nombre);
+        const token = normalizarTokenInvitacion(joinInviteTokenInput.value);
+        // Primer paso: enseñar a qué familia lleva el enlace; el segundo envío la acepta.
+        if (invitacionVerificada?.token !== token) {
+            const info = await verInvitacion(token);
+            mostrarConfirmacionEnOnboarding(info);
+            confirmando = true;
+            return;
+        }
+        btnJoinTribu.innerText = 'Uniéndote...';
+        const family = await handleJoinTribu(token, nombre);
         showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
-        onboardingView.classList.add('hidden');
-        appView.classList.remove('hidden');
-        if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-        await renderizarVista('dashboard');
+        await entrarEnTribu();
     } catch (err) {
         onboardingError.innerText = err.message || 'No se pudo unir a la tribu';
         onboardingError.classList.remove('hidden');
     } finally {
         btnJoinTribu.disabled = false;
-        btnJoinTribu.innerText = 'Unirme a la Tribu';
+        if (!confirmando) {
+            btnJoinTribu.innerText = invitacionVerificada ? `Sí, unirme a ${invitacionVerificada.familia_nombre}` : 'Unirme a la Tribu';
+        }
     }
 });
 
@@ -2217,12 +2434,14 @@ onboardingForm.addEventListener('submit', async (event) => {
     btnOnboarding.disabled = true;
     btnOnboarding.innerText = 'Creando...';
 
-    const nombreFamilia = document.getElementById('tribu-nombre').value.trim();
+    const nombreFamilia = document.getElementById('tribu-nombre').value.trim().slice(0, 80);
+    const nombreUsuario = (document.getElementById('tribu-nombre-usuario')?.value.trim() || getFriendlyUserName()).slice(0, 50);
     const dieta = document.getElementById('tribu-dieta').value;
     const flexibilidad = document.getElementById('tribu-flexibilidad').value;
 
     if (!nombreFamilia) {
-        alert('Pon un nombre para tu tribu.');
+        onboardingError.innerText = 'Pon un nombre para tu tribu.';
+        onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
         btnOnboarding.innerText = 'Crear Tribu';
         return;
@@ -2233,7 +2452,7 @@ onboardingForm.addEventListener('submit', async (event) => {
             p_nombre: nombreFamilia,
             p_dieta_base: dieta,
             p_nivel_flexibilidad: flexibilidad,
-            p_nombre_usuario: getFriendlyUserName(),
+            p_nombre_usuario: nombreUsuario,
         });
         if (error) throw error;
         const profile = Array.isArray(data) ? data[0] : data;
@@ -2242,18 +2461,14 @@ onboardingForm.addEventListener('submit', async (event) => {
         }
         currentProfile = profile;
     } catch (error) {
-        let message = `No se pudo crear la tribu: ${error.message}`;
-        onboardingError.innerText = message;
+        onboardingError.innerText = `No se pudo crear la tribu: ${traducirErrorAuth(error)}`;
         onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
         btnOnboarding.innerText = 'Crear Tribu';
         return;
     }
 
-    onboardingView.classList.add('hidden');
-    appView.classList.remove('hidden');
-    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-    await renderizarVista('dashboard');
+    await entrarEnTribu();
     btnOnboarding.disabled = false;
     btnOnboarding.innerText = 'Crear Tribu';
     onboardingForm.reset();
@@ -2321,7 +2536,21 @@ async function fetchFamilyData() {
             .order('fecha_objetivo', { ascending: true }),
     ]);
 
-    if (familyResult.error) throw familyResult.error;
+    if (familyResult.error) {
+        // La familia ya no es visible (p. ej. un admin nos ha quitado): volver a comprobar el perfil
+        if (familyResult.error.code === 'PGRST116' && currentUser) {
+            const { data: perfil } = await supabase.from('usuarios').select('familia_id').eq('id', currentUser.id).maybeSingle();
+            if (!perfil?.familia_id) {
+                currentProfile = currentProfile ? { ...currentProfile, familia_id: null } : null;
+                if (typeof detenerSincronizacionTiempoReal === 'function') {
+                    try { detenerSincronizacionTiempoReal(); } catch {}
+                }
+                mostrarOnboarding('Ya no perteneces a esta familia. Crea una tribu nueva o únete con una invitación.');
+                throw new Error('Ya no perteneces a esta familia.');
+            }
+        }
+        throw familyResult.error;
+    }
     if (membersResult.error) throw membersResult.error;
 
     let tasks = [];
@@ -2371,7 +2600,7 @@ async function openInviteModal(family, inviteToken = null) {
         });
         if (error) {
             console.error('Error al crear invitación segura:', error);
-            showToast(`No se pudo generar el enlace de invitación: ${error.message}`);
+            showToast(`No se pudo generar el enlace de invitación: ${traducirErrorInvitacion(error)}`);
             return;
         }
         const invitation = Array.isArray(data) ? data[0] : data;
@@ -2383,7 +2612,7 @@ async function openInviteModal(family, inviteToken = null) {
     }
 
     const publicUrl = getPublicAppUrl();
-    const directJoinLink = `${publicUrl.replace(/\/$/, '')}/?invite=${encodeURIComponent(inviteToken)}&tribu=${encodeURIComponent(family.nombre || 'Mi Hogar')}`;
+    const directJoinLink = `${publicUrl.replace(/\/$/, '')}/?invite=${encodeURIComponent(inviteToken)}`;
     const customDeployUrl = localStorage.getItem('tribuapp_custom_deploy_url') || '';
 
     const html = `
@@ -2401,7 +2630,7 @@ async function openInviteModal(family, inviteToken = null) {
             <div style="font-size: 11px; color: var(--primary); margin-top: 6px;">Tribu: ${escapeHtml(family?.nombre || 'Mi Hogar')}</div>
         </div>
         <p style="font-size: 12px; color: var(--text-muted); margin: -4px 0 14px;">
-            El enlace se puede reutilizar y caduca en 7 días.
+            El enlace caduca en 7 días y admite hasta 10 usos. Puedes invalidarlo desde «Miembros de la Tribu».
         </p>
 
         <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: left;">
@@ -2704,8 +2933,27 @@ async function renderDashboard(renderId) {
                     </div>
                 `).join('')}
             </div>
+            ${currentProfile?.rol === 'Admin' ? `
+                <button type="button" id="btn-revoke-invites" class="btn-secondary" style="margin-top: 12px; font-size: 12px; padding: 8px 12px; width: 100%;">🔒 Invalidar enlaces de invitación</button>
+            ` : ''}
         </section>
     `;
+
+    document.getElementById('btn-revoke-invites')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        if (!confirm('¿Invalidar todos los enlaces de invitación activos? Quien tenga uno ya no podrá usarlo. Podrás crear uno nuevo con «Invitar».')) return;
+        button.disabled = true;
+        try {
+            const { error } = await supabase.rpc('revocar_invitaciones_familia', { p_familia_id: family.id });
+            if (error) throw error;
+            showToast('🔒 Enlaces de invitación invalidados');
+        } catch (error) {
+            console.error('Error al invalidar invitaciones:', error);
+            showToast(`⚠️ No se pudieron invalidar los enlaces: ${traducirErrorInvitacion(error)}`);
+        } finally {
+            button.disabled = false;
+        }
+    });
 
     mainContent.querySelectorAll('[data-nav-view]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -2750,7 +2998,7 @@ async function renderDashboard(renderId) {
                 await renderizarVista('dashboard');
             } catch (error) {
                 console.error('Error al quitar miembro de la familia:', error);
-                showToast(`No se pudo quitar al miembro: ${error.message}`);
+                showToast(`No se pudo quitar al miembro: ${traducirErrorAuth(error)}`);
                 button.disabled = false;
             }
         });
@@ -4674,14 +4922,7 @@ supabase.auth.onAuthStateChange((event, session) => {
     }
 
     if (event === 'SIGNED_OUT') {
-        isPasswordRecovery = false;
-        setCurrentUser(null);
-        currentProfile = null;
-        authView.classList.remove('hidden');
-        onboardingView.classList.add('hidden');
-        appView.classList.add('hidden');
-        if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
-        resetStandardAuthUI();
+        cerrarSesionLocal();
     }
 });
 
