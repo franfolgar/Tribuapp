@@ -2548,16 +2548,6 @@ function limpiarDatosLocalesUsuario() {
     nombreParaInvitacion = '';
 }
 
-function cerrarModoSupermercado() {
-    const smModal = document.getElementById('supermarket-modal');
-    if (!smModal) return;
-    if (supermarketWakeLock) {
-        try { supermarketWakeLock.release(); } catch {}
-        supermarketWakeLock = null;
-    }
-    smModal.remove();
-}
-
 // Deja la app en la pantalla de acceso sin rastro de la sesión anterior.
 function cerrarSesionLocal() {
     if (typeof detenerSincronizacionTiempoReal === 'function') {
