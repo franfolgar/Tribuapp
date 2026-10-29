@@ -1,5 +1,5 @@
-// Importamos Supabase directamente desde el CDN para módulos ES
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+// supabase-js 2.118.0 servido desde el propio origen (ver vendor/README.md) para funcionar sin conexión
+import { createClient } from './vendor/supabase-js.mjs';
 
 const SUPABASE_URL = 'https://skdlkrcdwhxfuwukvoce.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UIZX50yoepGiITkC2hREFQ_elTXm7hV';
@@ -1474,6 +1474,9 @@ function getFriendlyUserName() {
 async function checkSession() {
     const isRecoveryUrl = detectPasswordRecoveryState();
 
+    // Sin red no esperamos a que supabase-js intente refrescar el token: usamos lo guardado
+    if (!navigator.onLine && !isRecoveryUrl && arrancarSinConexion()) return;
+
     try {
         let { data: { session }, error } = await supabase.auth.getSession();
 
@@ -1512,6 +1515,7 @@ async function checkSession() {
         }
 
         if (error) {
+            if (esErrorDeRed(error) && arrancarSinConexion()) return;
             showAuthError(`No se pudo comprobar la sesión: ${error.message}`);
             return;
         }
@@ -1526,6 +1530,7 @@ async function checkSession() {
         setCurrentUser(session?.user || null);
         await mostrarApp();
     } catch (error) {
+        if (esErrorDeRed(error) && arrancarSinConexion()) return;
         showAuthError(`No se pudo conectar con Supabase: ${error.message}`);
     }
 }
@@ -2102,6 +2107,7 @@ async function mostrarApp() {
         .maybeSingle();
 
     if (error) {
+        if (esErrorDeRed(error) && arrancarSinConexion(currentUser)) return;
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
         authView.classList.remove('hidden');
@@ -2110,6 +2116,7 @@ async function mostrarApp() {
     }
 
     currentProfile = profile;
+    guardarPerfilSinConexion(profile);
     if (!profile) {
         // Si hay una invitación pendiente, unirse automáticamente sin pantallas intermedias
         if (pendingInvite) {
@@ -2168,6 +2175,7 @@ async function mostrarApp() {
     onboardingView.classList.add('hidden');
     appView.classList.remove('hidden');
     if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+    salirModoSinConexion();
     await syncFamilyDataFromSupabase();
     renderizarVista('dashboard');
 }
@@ -2339,15 +2347,28 @@ async function renderizarVista(vista) {
                 await renderDashboard(renderId);
         }
     } catch (error) {
-        if (renderId === viewRenderId) {
-            mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(error.message)}</p>`;
+        if (renderId !== viewRenderId) return;
+        if (esErrorDeRed(error)) {
+            // Sin red: repetimos la vista con los últimos datos guardados
+            if (!modoSinConexion && leerFamiliaSinConexion()) {
+                entrarModoSinConexion();
+                return renderizarVista(vista);
+            }
+            mostrarBannerSinConexion();
+            mainContent.innerHTML = '<p class="error-text" role="alert">Sin conexión y sin datos guardados para esta vista. Se cargará al volver la conexión.</p>';
+            return;
         }
+        mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(error.message)}</p>`;
     }
 }
 
 async function fetchFamilyData() {
     if (!currentProfile?.familia_id) {
         throw new Error('Tu perfil todavía no está vinculado a una tribu.');
+    }
+    if (modoSinConexion) {
+        const guardado = leerFamiliaSinConexion();
+        if (guardado) return guardado;
     }
 
     const [familyResult, membersResult, tasksResult] = await Promise.all([
@@ -2371,11 +2392,13 @@ async function fetchFamilyData() {
         tasks = Array.isArray(storedTasks) ? storedTasks.filter(t => !String(t.id).startsWith('demo-')) : [];
     }
 
-    return {
+    const familyData = {
         family: familyResult.data,
         members: membersResult.data || [],
         tasks,
     };
+    guardarFamiliaSinConexion(familyData);
+    return familyData;
 }
 
 async function removeFamilyMember(member) {
@@ -4752,21 +4775,211 @@ supabase.auth.onAuthStateChange((event, session) => {
     }
 });
 
-// PWA Service Worker Registration & Notification Navigation
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch((err) => {
-            console.warn('Service worker registration failed:', err);
-        });
-    });
+// --- Modo sin conexión ---
+// El service worker se registra en register-sw.js. Aquí guardamos el último perfil y
+// los datos de la familia para poder arrancar y navegar sin red.
+const OFFLINE_KEYS = {
+    perfil: 'tribuapp-offline-perfil',
+    familia: 'tribuapp-offline-familia',
+};
+const SUPABASE_AUTH_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
+const OFFLINE_BANNER_TEXT = 'Sin conexión: mostrando los últimos datos guardados';
+let modoSinConexion = false;
 
-    navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'NAVIGATE_VIEW') {
-            const targetView = event.data.targetView || 'dashboard';
-            renderizarVista(targetView);
-        }
+function esErrorDeRed(error) {
+    if (!navigator.onLine) return true;
+    const texto = `${error?.name || ''} ${error?.message || error || ''}`;
+    return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|AuthRetryableFetchError/i.test(texto);
+}
+
+function leerJsonLocal(key) {
+    try {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+    } catch {
+        return null;
+    }
+}
+
+function guardarJsonLocal(key, value) {
+    try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+        console.warn('No se pudieron guardar los datos sin conexión:', error);
+    }
+}
+
+function guardarPerfilSinConexion(profile) {
+    if (!currentUser?.id) return;
+    if (!profile?.familia_id) {
+        guardarJsonLocal(OFFLINE_KEYS.perfil, null);
+        guardarJsonLocal(OFFLINE_KEYS.familia, null);
+        return;
+    }
+    guardarJsonLocal(OFFLINE_KEYS.perfil, {
+        userId: currentUser.id,
+        email: currentUser.email || '',
+        perfil: profile,
+        guardadoEn: Date.now(),
     });
 }
+
+function guardarFamiliaSinConexion({ family, members, tasks }) {
+    if (!currentUser?.id || !currentProfile?.familia_id) return;
+    guardarJsonLocal(OFFLINE_KEYS.familia, {
+        userId: currentUser.id,
+        familiaId: currentProfile.familia_id,
+        family,
+        members,
+        tasks,
+        guardadoEn: Date.now(),
+    });
+}
+
+function leerFamiliaSinConexion() {
+    const guardado = leerJsonLocal(OFFLINE_KEYS.familia);
+    if (!guardado?.family || guardado.userId !== currentUser?.id || guardado.familiaId !== currentProfile?.familia_id) {
+        return null;
+    }
+    return {
+        family: guardado.family,
+        members: Array.isArray(guardado.members) ? guardado.members : [],
+        tasks: Array.isArray(guardado.tasks) ? guardado.tasks : [],
+    };
+}
+
+// Usuario de la sesión que supabase-js guarda en localStorage (sin tocar la red)
+function leerUsuarioSesionGuardada() {
+    const sesion = leerJsonLocal(SUPABASE_AUTH_KEY);
+    return sesion?.user || sesion?.currentSession?.user || null;
+}
+
+function mostrarBannerSinConexion(texto = OFFLINE_BANNER_TEXT) {
+    let banner = document.getElementById('offline-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'offline-banner';
+        banner.className = 'alert-banner';
+        banner.setAttribute('role', 'status');
+        mainContent.parentNode.insertBefore(banner, mainContent);
+    }
+    banner.innerText = `📡 ${texto}`;
+}
+
+function ocultarBannerSinConexion() {
+    document.getElementById('offline-banner')?.remove();
+}
+
+function entrarModoSinConexion() {
+    modoSinConexion = true;
+    mostrarBannerSinConexion();
+}
+
+function salirModoSinConexion() {
+    modoSinConexion = false;
+    ocultarBannerSinConexion();
+    document.getElementById('offline-view')?.classList.add('hidden');
+}
+
+function mostrarPantallaSinConexion() {
+    authView.classList.add('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.add('hidden');
+    let pantalla = document.getElementById('offline-view');
+    if (!pantalla) {
+        pantalla = document.createElement('div');
+        pantalla.id = 'offline-view';
+        pantalla.className = 'view-container';
+        pantalla.innerHTML = `
+            <div class="auth-card">
+                <h1>⛺ Tribuapp</h1>
+                <h2>📡 Sin conexión</h2>
+                <p role="status">No hay conexión a internet y este dispositivo todavía no tiene datos de tu tribu guardados. Conéctate y pulsa Reintentar.</p>
+                <button type="button" id="btn-offline-retry" class="btn-primary">Reintentar</button>
+            </div>`;
+        // Mismo centrado que #auth-view (vía CSSOM para no depender de estilos inline)
+        Object.assign(pantalla.style, { justifyContent: 'center', alignItems: 'center', padding: '20px' });
+        pantalla.querySelector('#btn-offline-retry').style.marginTop = '16px';
+        document.body.insertBefore(pantalla, appView);
+        pantalla.querySelector('#btn-offline-retry').addEventListener('click', reintentarConexion);
+    }
+    pantalla.classList.remove('hidden');
+}
+
+// Muestra la app con el último perfil guardado. Devuelve false si no hay sesión guardada
+// (entonces se sigue el flujo normal hacia el login).
+function arrancarSinConexion(usuario = null) {
+    const user = usuario || leerUsuarioSesionGuardada();
+    if (!user?.id) return false;
+
+    const guardado = leerJsonLocal(OFFLINE_KEYS.perfil);
+    if (!guardado?.perfil?.familia_id || guardado.userId !== user.id) {
+        mostrarPantallaSinConexion();
+        return true;
+    }
+
+    if (currentUser?.id !== user.id) setCurrentUser(user);
+    currentProfile = guardado.perfil;
+    document.getElementById('offline-view')?.classList.add('hidden');
+    authView.classList.add('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.remove('hidden');
+    entrarModoSinConexion();
+
+    const familia = leerFamiliaSinConexion();
+    if (headerTribeBadge && familia?.family?.nombre) {
+        headerTribeBadge.innerText = `⛺ ${familia.family.nombre}`;
+        headerTribeBadge.classList.remove('hidden');
+    }
+    renderizarVista(currentView || 'dashboard');
+    return true;
+}
+
+async function reintentarConexion() {
+    const boton = document.getElementById('btn-offline-retry');
+    if (boton) {
+        boton.disabled = true;
+        boton.innerText = 'Conectando...';
+    }
+    try {
+        await checkSession();
+    } finally {
+        if (boton) {
+            boton.disabled = false;
+            boton.innerText = 'Reintentar';
+        }
+        if ([authView, onboardingView, appView].some((view) => !view.classList.contains('hidden'))) {
+            document.getElementById('offline-view')?.classList.add('hidden');
+        }
+    }
+}
+
+// Al volver la red: recargamos sesión, perfil y datos, y volvemos a la vista en la que estaba
+async function resincronizarTrasConexion() {
+    const vista = currentView || 'dashboard';
+    salirModoSinConexion();
+    await checkSession();
+    if (vista !== 'dashboard' && currentProfile && !appView.classList.contains('hidden')) {
+        renderizarVista(vista);
+    }
+}
+
+window.addEventListener('online', () => {
+    const pantalla = document.getElementById('offline-view');
+    if (pantalla && !pantalla.classList.contains('hidden')) {
+        reintentarConexion();
+    } else if (modoSinConexion || document.getElementById('offline-banner')) {
+        resincronizarTrasConexion();
+    }
+});
+
+window.addEventListener('offline', () => {
+    if (appView.classList.contains('hidden') || !currentProfile) return;
+    if (leerFamiliaSinConexion()) entrarModoSinConexion();
+    else mostrarBannerSinConexion('Sin conexión: los cambios no se guardarán hasta que vuelva la red');
+});
+
 
 initTheme();
 initNotifications();
