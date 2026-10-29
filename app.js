@@ -668,16 +668,7 @@ function openNotificationsModal() {
 
 function initNotifications() {
     btnNotificationsToggle?.addEventListener('click', openNotificationsModal);
-
-    // Escuchar mensajes provenientes del Service Worker (ej. clic en notificación que solicita cambiar de vista)
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.addEventListener('message', (event) => {
-            if (event.data && event.data.type === 'NAVIGATE_VIEW') {
-                const targetView = event.data.targetView || 'dashboard';
-                renderizarVista(targetView);
-            }
-        });
-    }
+    // El listener NAVIGATE_VIEW del Service Worker se registra una sola vez, junto al registro del SW (final del fichero).
 }
 
 // --- Floating Action Button (FAB) ---
@@ -793,7 +784,7 @@ async function openQuickAddTaskModal() {
         </div>
         <form id="quick-task-form">
             <label for="quick-task-name">Nombre de la tarea</label>
-            <input type="text" id="quick-task-name" placeholder="Ej. Poner lavadora, pasar aspiradora..." required autofocus>
+            <input type="text" id="quick-task-name" placeholder="Ej. Poner lavadora, pasar aspiradora..." maxlength="120" required autofocus>
 
             <div class="form-row-2">
                 <div>
@@ -815,8 +806,8 @@ async function openQuickAddTaskModal() {
                     <option value="Puntual">Puntual (una sola vez)</option>
                     <option value="Diaria">🔄 Diaria (todos los días)</option>
                     <option value="Semanal">🔄 Semanal (cada 7 días)</option>
-                    <option value="Quincenal">🔄 Quincenal</option>
-                    <option value="Mensual">🔄 Mensual</option>
+                    <option value="Quincenal">🔄 Quincenal (cada 14 días)</option>
+                    <option value="Mensual">🔄 Mensual (mismo día cada mes)</option>
                 </select>
             </div>
 
@@ -833,56 +824,28 @@ async function openQuickAddTaskModal() {
     document.getElementById('quick-task-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const submitBtn = document.getElementById('btn-quick-task-submit');
-        submitBtn.disabled = true;
-        submitBtn.innerText = 'Guardando...';
-
-        const nombre = document.getElementById('quick-task-name').value.trim();
+        const nombreInput = document.getElementById('quick-task-name');
+        const nombre = nombreInput.value.trim().slice(0, 120);
         const asignadoA = document.getElementById('quick-task-assign').value || null;
         const fecha = document.getElementById('quick-task-date').value || today;
         const recurrencia = document.getElementById('quick-task-recurrence').value || 'Puntual';
 
-        if (!nombre) return;
-
-        let inserted = false;
-        try {
-            const { data: catData, error: catError } = await supabase
-                .from('tareas_catalogo')
-                .insert({
-                    familia_id: currentProfile?.familia_id || null,
-                    nombre,
-                    recurrencia_sugerida: recurrencia
-                })
-                .select('id')
-                .single();
-
-            if (!catError && catData?.id) {
-                const { error: asigError } = await supabase
-                    .from('tareas_asignadas')
-                    .insert({
-                        familia_id: currentProfile?.familia_id,
-                        tarea_id: catData.id,
-                        asignado_a: asignadoA,
-                        fecha_objetivo: fecha,
-                        recurrencia,
-                        estado: 'Pendiente'
-                    });
-                if (!asigError) inserted = true;
-            }
-        } catch {
-            inserted = false;
+        if (!nombre) {
+            showToast('Escribe el nombre de la tarea.');
+            nombreInput.focus();
+            return;
         }
 
-        if (!inserted) {
-            const currentTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-            currentTasks.push({
-                id: crypto.randomUUID(),
-                fecha_objetivo: fecha,
-                estado: 'Pendiente',
-                asignado_a: asignadoA,
-                recurrencia,
-                tareas_catalogo: { nombre }
-            });
-            saveToStorage(STORAGE_KEYS.tasks, currentTasks);
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Guardando...';
+        try {
+            await crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia });
+        } catch (error) {
+            console.error('Error al crear la tarea:', error);
+            showToast(`⚠️ No se pudo crear la tarea: ${error.message || 'error de conexión'}`);
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Guardar Tarea';
+            return;
         }
 
         showToast(`✅ Tarea "${nombre}" creada`);
@@ -1164,18 +1127,27 @@ async function persistShoppingItemToSupabase(item, action = 'upsert') {
 }
 
 
+// Puntos Tribu: la fuente de verdad es la BD (RPC puntos_familia, 10 pts por tarea completada).
+// localStorage sólo guarda una caché de lectura para mostrar algo si no hay conexión.
 function getKarmaPoints() {
-    return readFromStorage(STORAGE_KEYS.karma, {
-        '31b888de-c2bf-4077-903f-874ad3bc9263': 50
-    }) || {};
+    const cached = readFromStorage(STORAGE_KEYS.karma, {});
+    return cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : {};
 }
 
-function addKarmaPoints(memberId, points = 10) {
-    const karma = getKarmaPoints();
-    const id = memberId || currentProfile?.id || 'user';
-    karma[id] = (karma[id] || 0) + points;
-    saveToStorage(STORAGE_KEYS.karma, karma);
-    return karma[id];
+async function cargarPuntosFamilia() {
+    try {
+        const { data, error } = await supabase.rpc('puntos_familia');
+        if (error) throw error;
+        const karma = {};
+        (Array.isArray(data) ? data : []).forEach((row) => {
+            if (row?.usuario_id) karma[row.usuario_id] = Number(row.puntos) || 0;
+        });
+        saveToStorage(STORAGE_KEYS.karma, karma);
+        return karma;
+    } catch (error) {
+        console.warn('No se pudieron cargar los puntos de la familia:', error);
+        return getKarmaPoints();
+    }
 }
 
 function triggerConfetti() {
@@ -1264,16 +1236,6 @@ function getLocalDateInputValue(date = new Date()) {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-}
-
-function computeNextRecurringDate(baseDateStr, recurrence) {
-    const d = new Date(baseDateStr ? `${baseDateStr}T00:00:00` : new Date());
-    if (recurrence === 'Diaria') d.setDate(d.getDate() + 1);
-    else if (recurrence === 'Semanal') d.setDate(d.getDate() + 7);
-    else if (recurrence === 'Quincenal') d.setDate(d.getDate() + 14);
-    else if (recurrence === 'Mensual') d.setMonth(d.getMonth() + 1);
-    else return null;
-    return getLocalDateInputValue(d);
 }
 
 function escapeHtml(value) {
@@ -2526,7 +2488,8 @@ async function renderDashboard(renderId) {
     const [{ family, members, tasks }, localState] = await Promise.all([fetchFamilyData(), getAppState()]);
     if (renderId !== viewRenderId) return;
 
-    const karmaMap = getKarmaPoints();
+    const karmaMap = await cargarPuntosFamilia();
+    if (renderId !== viewRenderId) return;
     const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
 
     if (headerTribeBadge) {
@@ -2814,119 +2777,116 @@ async function renderDashboard(renderId) {
 
 // --- TAREAS VIEW (Filtros, Recurrencia y Progreso Visual) ---
 
+// Crea la tarea en el catálogo de la familia y su asignación. Si falla la asignación,
+// borra el catálogo recién creado para no dejar huérfanos. Lanza el error real.
+async function crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia }) {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) throw new Error('Tu perfil no está vinculado a una tribu.');
+
+    const { data: catalog, error: catalogError } = await supabase.from('tareas_catalogo')
+        .insert({
+            familia_id: familiaId,
+            nombre,
+            recurrencia_sugerida: recurrencia
+        })
+        .select('id')
+        .single();
+    if (catalogError) throw catalogError;
+    if (!catalog?.id) throw new Error('Supabase no devolvió la tarea creada.');
+
+    const { error: assignmentError } = await supabase.from('tareas_asignadas')
+        .insert({
+            familia_id: familiaId,
+            tarea_id: catalog.id,
+            asignado_a: asignadoA,
+            fecha_objetivo: fecha,
+            recurrencia,
+            estado: 'Pendiente'
+        });
+    if (assignmentError) {
+        const { error: cleanupError } = await supabase.from('tareas_catalogo').delete().eq('id', catalog.id);
+        if (cleanupError) console.warn('No se pudo deshacer la tarea del catálogo:', cleanupError);
+        throw assignmentError;
+    }
+}
+
 async function completarTarea(taskId) {
-    const isDemo = String(taskId).startsWith('demo-');
-    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    const task = storedTasks.find(t => String(t.id) === String(taskId));
-
-    // 1. Actualización optimista local
-    const updated = storedTasks.map((t) => String(t.id) === String(taskId) ? { ...t, estado: 'Completada' } : t);
-    saveToStorage(STORAGE_KEYS.tasks, updated);
-
-    // 2. Persistir en Supabase solo si es tarea real (no demo)
-    if (!isDemo) {
-        try {
-            const { error } = await supabase.from('tareas_asignadas')
-                .update({ estado: 'Completada' })
-                .eq('id', taskId);
-
-            if (error) {
-                console.error('Error al completar tarea en Supabase:', error);
-                showToast(`Aviso: ${error.message || 'No se pudo guardar en la nube'}`);
-            }
-        } catch (err) {
-            console.error('Excepción al completar tarea:', err);
-        }
+    // La BD completa la tarea de forma atómica (sólo si sigue Pendiente) y programa la siguiente
+    // ocurrencia si es recurrente. Los puntos y la celebración sólo llegan si el servidor confirma.
+    let resultado = null;
+    try {
+        const { data, error } = await supabase.rpc('completar_tarea', { p_asignacion_id: taskId });
+        if (error) throw error;
+        resultado = Array.isArray(data) ? data[0] : data;
+    } catch (err) {
+        console.error('Error al completar tarea en Supabase:', err);
+        showToast('⚠️ No se pudo completar la tarea. Revisa tu conexión e inténtalo de nuevo.');
+        await renderizarVista(currentView);
+        return false;
     }
 
-    // 3. Puntos Tribu y Gamificación infantil / familiar
-    const assignedMemberId = task?.asignado_a || currentProfile?.id;
-    const newTotalPoints = addKarmaPoints(assignedMemberId, 10);
+    if (!resultado?.ok) {
+        const motivo = resultado?.motivo === 'ya_completada_o_no_existe'
+            ? 'Esta tarea ya estaba completada o se ha eliminado.'
+            : 'No se pudo completar la tarea.';
+        showToast(`ℹ️ ${motivo} Se ha actualizado la lista.`);
+        await renderizarVista(currentView);
+        return false;
+    }
+
+    const puntos = Number(resultado.puntos) || 10;
+    const karma = await cargarPuntosFamilia();
+    const totalTribu = Object.values(karma).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
     triggerConfetti();
 
     if ('vibrate' in navigator) {
         try { navigator.vibrate([40, 50, 40]); } catch {}
     }
 
-    showToast(`🎉 ¡Tarea completada! +10 Puntos Tribu ⭐ (Total: ${newTotalPoints} pts)`);
+    let mensaje = `🎉 ¡Tarea completada! +${puntos} Puntos Tribu ⭐ (Tribu: ${totalTribu} pts)`;
+    if (resultado.siguiente_fecha) {
+        const siguiente = new Date(`${resultado.siguiente_fecha}T00:00:00`).toLocaleDateString('es-ES');
+        mensaje += ` · Próxima: ${siguiente}`;
+    }
+    showToast(mensaje);
 
-    // Comprobar si todas las tareas de hoy están completadas
+    await renderizarVista(currentView);
+
+    // Comprobar con los datos ya recargados si todas las tareas de hoy están completadas
     const todayIso = getLocalDateInputValue();
-    const remainingToday = updated.filter(t => t.fecha_objetivo === todayIso && t.estado !== 'Completada');
-    if (remainingToday.length === 0 && updated.some(t => t.fecha_objetivo === todayIso)) {
+    const tareas = readFromStorage(STORAGE_KEYS.tasks, []);
+    const deHoy = Array.isArray(tareas) ? tareas.filter(t => t.fecha_objetivo === todayIso) : [];
+    if (deHoy.length && deHoy.every(t => t.estado === 'Completada')) {
         setTimeout(() => {
             showToast('🏆 ¡Todas las tareas de hoy completadas! Medalla de oro para la tribu.');
         }, 800);
     }
-
-    // 4. Recurrencia: programar próxima aparición automática si es periódica (solo tareas reales de la tribu)
-    if (!isDemo && task && task.recurrencia && task.recurrencia !== 'Puntual') {
-        const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
-        if (nextDate) {
-            let insertedInCloud = false;
-            if (currentProfile?.familia_id && task.tarea_id) {
-                try {
-                    const { error: recErr } = await supabase.from('tareas_asignadas').insert({
-                        familia_id: currentProfile.familia_id,
-                        tarea_id: task.tarea_id,
-                        asignado_a: task.asignado_a || null,
-                        fecha_objetivo: nextDate,
-                        recurrencia: task.recurrencia,
-                        estado: 'Pendiente'
-                    });
-                    if (!recErr) insertedInCloud = true;
-                } catch (recErr) {
-                    console.warn('Error programando tarea recurrente en Supabase:', recErr);
-                }
-            }
-            if (!insertedInCloud) {
-                const recurringTask = {
-                    id: crypto.randomUUID(),
-                    tarea_id: task.tarea_id || null,
-                    fecha_objetivo: nextDate,
-                    estado: 'Pendiente',
-                    asignado_a: task.asignado_a || null,
-                    recurrencia: task.recurrencia,
-                    tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
-                };
-                const currentList = readFromStorage(STORAGE_KEYS.tasks, []);
-                currentList.push(recurringTask);
-                saveToStorage(STORAGE_KEYS.tasks, currentList);
-            }
-        }
-    }
-
-    await renderizarVista(currentView);
+    return true;
 }
 
 async function eliminarTarea(taskId) {
-    const isDemo = String(taskId).startsWith('demo-');
-    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    const updated = storedTasks.filter((t) => String(t.id) !== String(taskId));
-    saveToStorage(STORAGE_KEYS.tasks, updated);
-
-    if (!isDemo) {
-        try {
-            const { error } = await supabase.from('tareas_asignadas')
-                .delete()
-                .eq('id', taskId);
-            if (error) {
-                console.error('Error al eliminar tarea en Supabase:', error);
-            }
-        } catch (err) {
-            console.error('Excepción al eliminar tarea:', err);
+    try {
+        const { data, error } = await supabase.from('tareas_asignadas')
+            .delete()
+            .eq('id', taskId)
+            .select('id');
+        if (error) throw error;
+        if (!Array.isArray(data) || data.length === 0) {
+            showToast('ℹ️ La tarea ya no existe o no tienes permiso para eliminarla.');
+        } else {
+            showToast('Tarea eliminada');
         }
+    } catch (err) {
+        console.error('Error al eliminar tarea en Supabase:', err);
+        showToast('⚠️ No se pudo eliminar la tarea. Inténtalo de nuevo.');
     }
-
-    showToast('Tarea eliminada');
     await renderizarVista(currentView);
 }
 
 async function cargarVistaTareas(renderId) {
-    const { members, tasks } = await fetchFamilyData();
+    const [{ members, tasks }, karmaMap] = await Promise.all([fetchFamilyData(), cargarPuntosFamilia()]);
     if (renderId !== viewRenderId) return;
 
-    const karmaMap = getKarmaPoints();
     const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
     const sortedMembers = [...members].map(m => ({
         ...m,
@@ -3044,8 +3004,8 @@ async function cargarVistaTareas(renderId) {
                     <option value="Puntual">Puntual (una sola vez)</option>
                     <option value="Diaria">🔄 Diaria (todos los días)</option>
                     <option value="Semanal">🔄 Semanal (cada 7 días)</option>
-                    <option value="Quincenal">🔄 Quincenal (cada 15 días)</option>
-                    <option value="Mensual">🔄 Mensual</option>
+                    <option value="Quincenal">🔄 Quincenal (cada 14 días)</option>
+                    <option value="Mensual">🔄 Mensual (mismo día cada mes)</option>
                 </select>
             </div>
 
@@ -3166,40 +3126,13 @@ async function cargarVistaTareas(renderId) {
         button.disabled = true;
         button.innerText = 'Guardando...';
         try {
-            const { data: catalog, error: catalogError } = await supabase.from('tareas_catalogo')
-                .insert({
-                    familia_id: currentProfile.familia_id,
-                    nombre,
-                    recurrencia_sugerida: recurrencia
-                })
-                .select('id')
-                .single();
-            if (catalogError) throw catalogError;
-
-            const { error: assignmentError } = await supabase.from('tareas_asignadas')
-                .insert({
-                    familia_id: currentProfile.familia_id,
-                    tarea_id: catalog.id,
-                    asignado_a: asignadoA,
-                    fecha_objetivo: fecha,
-                    recurrencia: recurrencia,
-                    estado: 'Pendiente'
-                })
-                .select('id')
-                .single();
-            if (assignmentError) throw assignmentError;
+            await crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia });
         } catch (error) {
-            console.warn('Guardando tarea localmente:', error.message);
-            const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-            storedTasks.push({
-                id: crypto.randomUUID(),
-                fecha_objetivo: fecha,
-                estado: 'Pendiente',
-                asignado_a: asignadoA,
-                recurrencia,
-                tareas_catalogo: { nombre },
-            });
-            saveToStorage(STORAGE_KEYS.tasks, storedTasks);
+            console.error('Error al crear la tarea:', error);
+            showToast(`⚠️ No se pudo crear la tarea: ${error.message || 'error de conexión'}`);
+            button.disabled = false;
+            button.innerText = 'Guardar Tarea';
+            return;
         }
 
         showToast('Tarea creada y asignada');
