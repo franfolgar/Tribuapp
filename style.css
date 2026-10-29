@@ -8,10 +8,15 @@
     --header-bg: rgba(255, 255, 255, 0.92);
     --nav-bg: rgba(255, 255, 255, 0.94);
     --text-main: #1F2937;
-    --text-muted: #6B7280;
+    --text-muted: #4B5563;
     --border-color: #E2E8F0;
-    --danger: #EF4444;
-    --success: #10B981;
+    --danger: #B91C1C;
+    --success: #047857;
+    /* Fondo de botones con texto blanco (AA en claro y oscuro) */
+    --primary-solid: #4F46E5;
+    --primary-solid-dark: #4338CA;
+    --whatsapp: #075E54;
+    --whatsapp-hover: #064C44;
     --shadow: 0 10px 25px rgba(31, 41, 55, 0.08);
 }
 
@@ -71,12 +76,20 @@ select {
     font: inherit;
 }
 
+/* Foco visible para teclado: contorno sólido de 3px (>= 3:1 en claro y oscuro) */
 button:focus-visible,
+a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-summary:focus-visible {
-    outline: 3px solid rgba(79, 70, 229, 0.35);
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+    outline: 3px solid var(--primary);
     outline-offset: 2px;
+}
+
+[tabindex="-1"]:focus {
+    outline: none;
 }
 
 .hidden {
@@ -157,8 +170,23 @@ input,
 
 input:focus,
 .input-select:focus {
-    outline: 2px solid rgba(79, 70, 229, 0.15);
+    outline: 3px solid var(--primary);
+    outline-offset: 1px;
     border-color: var(--primary);
+}
+
+/* Casillas: 24px; la zona táctil grande la da su <label> */
+input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--primary-solid);
+}
+
+input[type="checkbox"]:focus {
+    outline-offset: 2px;
 }
 
 .btn-primary,
@@ -172,11 +200,16 @@ input:focus,
 
 .btn-primary {
     width: 100%;
-    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    background: linear-gradient(135deg, var(--primary-solid), var(--primary-solid-dark));
     color: white;
     padding: 14px;
     font-size: 16px;
     font-weight: 600;
+}
+
+.btn-primary,
+.btn-secondary {
+    min-height: 44px;
 }
 
 .btn-primary:hover,
@@ -197,8 +230,9 @@ input:focus,
 }
 
 .btn-icon {
-    width: 42px;
-    height: 42px;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
     background: rgba(79, 70, 229, 0.08);
     color: var(--primary);
     font-size: 20px;
@@ -222,6 +256,16 @@ input:focus,
     color: var(--success);
     font-size: 14px;
     margin-top: 10px;
+}
+
+/* .auth-card p pinta el texto gris: los mensajes de estado mantienen su color */
+.auth-card .error-text {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.auth-card .success-text {
+    color: var(--success);
 }
 
 .auth-actions {
@@ -275,8 +319,17 @@ input:focus,
     z-index: 10;
 }
 
-.app-header h2 {
+.app-header h1 {
     font-size: 1.2rem;
+    font-weight: bold;
+    min-width: 0;
+    /* El título (corto) no se encoge; el chip de la tribu cede antes */
+    flex: 0 1 auto;
+    flex-shrink: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .app-content {
@@ -302,6 +355,12 @@ input:focus,
     margin-bottom: 6px;
 }
 
+button.chip {
+    border: none;
+    min-height: 44px;
+    cursor: pointer;
+}
+
 .chip {
     background: rgba(79, 70, 229, 0.1);
     color: var(--primary);
@@ -311,7 +370,12 @@ input:focus,
     font-weight: 600;
 }
 
-[data-theme="dark"] .chip,
+[data-theme="dark"] .chip {
+    background: rgba(129, 140, 248, 0.2);
+    color: #C7D2FE;
+    border: 1px solid rgba(129, 140, 248, 0.35);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .chip {
         background: rgba(129, 140, 248, 0.2);
@@ -366,7 +430,12 @@ input:focus,
     font-weight: 600;
 }
 
-[data-theme="dark"] .btn-secondary,
+[data-theme="dark"] .btn-secondary {
+    background: rgba(129, 140, 248, 0.18);
+    color: #C7D2FE;
+    border-color: rgba(129, 140, 248, 0.35);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .btn-secondary {
         background: rgba(129, 140, 248, 0.18);
@@ -442,7 +511,12 @@ input:focus,
     opacity: 0.6;
 }
 
-[data-theme="dark"] .member-pill,
+[data-theme="dark"] .member-pill {
+    background: rgba(129, 140, 248, 0.18);
+    color: #C7D2FE;
+    border-color: rgba(129, 140, 248, 0.35);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .member-pill {
         background: rgba(129, 140, 248, 0.18);
@@ -454,7 +528,7 @@ input:focus,
 .member-avatar {
     width: 24px;
     height: 24px;
-    background: var(--primary);
+    background: var(--primary-solid);
     border-radius: 50%;
     display: inline-flex;
     align-items: center;
@@ -507,7 +581,19 @@ input:focus,
     color: #15803d;
 }
 
-[data-theme="dark"] .task-card.completed,
+[data-theme="dark"] .task-card.completed {
+    background: rgba(16, 185, 129, 0.14);
+    border-color: rgba(52, 211, 153, 0.4);
+}
+[data-theme="dark"] .task-card.completed strong {
+    color: #A7F3D0;
+    text-decoration-color: #34D399;
+}
+[data-theme="dark"] .task-card.completed .today-task-meta span,
+[data-theme="dark"] .task-card.completed small {
+    color: #6EE7B7;
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .task-card.completed {
         background: rgba(16, 185, 129, 0.14);
@@ -549,11 +635,13 @@ input:focus,
     align-items: center;
     gap: 10px;
     flex: 1;
+    min-height: 44px;
+    cursor: pointer;
 }
 
 .shopping-item input[type='checkbox'] {
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     margin: 0;
 }
 
@@ -567,7 +655,15 @@ input:focus,
     color: var(--text-muted);
 }
 
-[data-theme="dark"] .shopping-item.done,
+[data-theme="dark"] .shopping-item.done {
+    background: rgba(15, 23, 42, 0.6);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+[data-theme="dark"] .shopping-item.done span {
+    color: #94A3B8;
+    text-decoration-color: #64748B;
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .shopping-item.done {
         background: rgba(15, 23, 42, 0.6);
@@ -587,6 +683,14 @@ input:focus,
     font-size: 13px;
     font-weight: 600;
     transition: opacity 0.15s ease;
+    /* Zona táctil mínima de 44x44 sin cambiar el aspecto del texto */
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
 }
 
 .text-button:hover {
@@ -607,6 +711,7 @@ input:focus,
     cursor: pointer;
     font-weight: 600;
     margin-bottom: 12px;
+    padding: 12px 0;
 }
 
 .completed-section .shopping-list {
@@ -716,7 +821,12 @@ input:focus,
     text-transform: uppercase;
 }
 
-[data-theme="dark"] .badge-today,
+[data-theme="dark"] .badge-today {
+    background: rgba(129, 140, 248, 0.22);
+    color: #C7D2FE;
+    border-color: rgba(129, 140, 248, 0.45);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .badge-today {
         background: rgba(129, 140, 248, 0.22);
@@ -738,7 +848,11 @@ input:focus,
     margin-bottom: 12px;
 }
 
-[data-theme="dark"] .alert-banner,
+[data-theme="dark"] .alert-banner {
+    color: #FDE68A;
+    border-color: rgba(245, 158, 11, 0.4);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .alert-banner {
         color: #FDE68A;
@@ -872,7 +986,7 @@ input:focus,
 
 .meal-badge.comida {
     background: rgba(245, 158, 11, 0.15);
-    color: #d97706;
+    color: #92400E;
     border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
@@ -882,7 +996,12 @@ input:focus,
     border: 1px solid rgba(99, 102, 241, 0.3);
 }
 
-[data-theme="dark"] .meal-badge.comida,
+[data-theme="dark"] .meal-badge.comida {
+    color: #FDE68A;
+    background: rgba(245, 158, 11, 0.22);
+    border-color: rgba(245, 158, 11, 0.45);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .meal-badge.comida {
         color: #FDE68A;
@@ -891,7 +1010,12 @@ input:focus,
     }
 }
 
-[data-theme="dark"] .meal-badge.cena,
+[data-theme="dark"] .meal-badge.cena {
+    color: #C7D2FE;
+    background: rgba(99, 102, 241, 0.22);
+    border-color: rgba(99, 102, 241, 0.45);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .meal-badge.cena {
         color: #C7D2FE;
@@ -1027,6 +1151,8 @@ input:focus,
     color: var(--text-muted);
     border-radius: 6px;
     line-height: 1;
+    min-width: 44px;
+    min-height: 44px;
 }
 
 .btn-delete-sm:hover {
@@ -1091,6 +1217,9 @@ input:focus,
     line-height: 1;
     padding: 4px;
     border-radius: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
 }
 
 .modal-close:hover {
@@ -1106,7 +1235,7 @@ input:focus,
 
 /* WhatsApp & AI Buttons */
 .btn-whatsapp {
-    background: #25D366 !important;
+    background: var(--whatsapp) !important;
     color: white !important;
     font-weight: 600;
     display: inline-flex;
@@ -1116,7 +1245,7 @@ input:focus,
 }
 
 .btn-whatsapp:hover {
-    background: #20bd5a !important;
+    background: var(--whatsapp-hover) !important;
 }
 
 .btn-ai {
@@ -1151,6 +1280,7 @@ input:focus,
     cursor: pointer;
     white-space: nowrap;
     transition: all 0.15s ease;
+    min-height: 44px;
 }
 
 .filter-tab.active {
@@ -1159,7 +1289,17 @@ input:focus,
     border-color: var(--primary);
 }
 
-[data-theme="dark"] .filter-tab,
+[data-theme="dark"] .filter-tab {
+    background: #162032;
+    color: #CBD5E1;
+    border-color: #475569;
+}
+[data-theme="dark"] .filter-tab.active {
+    background: rgba(129, 140, 248, 0.22);
+    color: #C7D2FE;
+    border-color: #818CF8;
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .filter-tab {
         background: #162032;
@@ -1235,11 +1375,12 @@ input:focus,
     color: var(--text-muted);
     cursor: pointer;
     user-select: none;
+    min-height: 44px;
 }
 
 .toggle-hide-completed input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
     accent-color: var(--primary);
     cursor: pointer;
 }
@@ -1250,23 +1391,36 @@ input:focus,
     gap: 6px;
     font-size: 12px;
     font-weight: 600;
-    color: #eab308;
+    color: #854D0E;
     background: rgba(234, 179, 8, 0.12);
     border: 1px solid rgba(234, 179, 8, 0.25);
     padding: 4px 10px;
     border-radius: 999px;
     cursor: pointer;
     transition: all 0.2s ease;
+    min-height: 44px;
 }
 
 .task-karma-summary:hover {
     background: rgba(234, 179, 8, 0.22);
 }
 
+[data-theme="dark"] .task-karma-summary,
+[data-theme="dark"] .task-points-badge {
+    color: #FDE047;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .task-karma-summary,
+    :root:not([data-theme="light"]) .task-points-badge {
+        color: #FDE047;
+    }
+}
+
 .task-points-badge {
     font-size: 11px;
     font-weight: 700;
-    color: #eab308;
+    color: #854D0E;
     background: rgba(234, 179, 8, 0.12);
     border-radius: 6px;
     padding: 2px 6px;
@@ -1277,27 +1431,50 @@ input:focus,
 }
 
 /* Podio en modo oscuro */
-[data-theme="dark"] .karma-panel,
-:root:not([data-theme="light"]) .karma-panel {
+[data-theme="dark"] .karma-panel {
     background: linear-gradient(135deg, #1e1b4b 0%, #172554 100%);
     border-color: #3730a3;
 }
 
-[data-theme="dark"] .podium-card,
-:root:not([data-theme="light"]) .podium-card {
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .karma-panel {
+        background: linear-gradient(135deg, #1e1b4b 0%, #172554 100%);
+        border-color: #3730a3;
+    }
+}
+
+[data-theme="dark"] .podium-card {
     background: #1e293b;
     border-color: #334155;
     color: #f1f5f9;
 }
 
-[data-theme="dark"] .podium-name,
-:root:not([data-theme="light"]) .podium-name {
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .podium-card {
+        background: #1e293b;
+        border-color: #334155;
+        color: #f1f5f9;
+    }
+}
+
+[data-theme="dark"] .podium-name {
     color: #f1f5f9;
 }
 
-[data-theme="dark"] .podium-points,
-:root:not([data-theme="light"]) .podium-points {
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .podium-name {
+        color: #f1f5f9;
+    }
+}
+
+[data-theme="dark"] .podium-points {
     color: #a78bfa;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .podium-points {
+        color: #a78bfa;
+    }
 }
 
 /* Confetti Burst Animation */
@@ -1367,6 +1544,7 @@ input:focus,
     font-size: 14px;
     cursor: pointer;
     flex: 1;
+    min-height: 44px;
 }
 
 .pantry-tag {
@@ -1422,7 +1600,12 @@ input:focus,
     text-transform: uppercase;
 }
 
-[data-theme="dark"] .recurrence-badge,
+[data-theme="dark"] .recurrence-badge {
+    color: #E9D5FF;
+    background: rgba(168, 85, 247, 0.22);
+    border-color: rgba(168, 85, 247, 0.5);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .recurrence-badge {
         color: #E9D5FF;
@@ -1443,7 +1626,12 @@ input:focus,
     gap: 3px;
 }
 
-[data-theme="dark"] .points-pill,
+[data-theme="dark"] .points-pill {
+    background: rgba(234, 179, 8, 0.2);
+    color: #FDE047;
+    border: 1px solid rgba(234, 179, 8, 0.4);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .points-pill {
         background: rgba(234, 179, 8, 0.2);
@@ -1474,6 +1662,8 @@ input:focus,
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .header-tribe-chip {
@@ -1484,24 +1674,59 @@ input:focus,
     font-weight: 600;
     padding: 4px 10px;
     border-radius: 999px;
+    /* Nombres de tribu largos: se recortan con puntos suspensivos */
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+[data-theme="dark"] .header-tribe-chip {
+    color: #C7D2FE;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .header-tribe-chip {
+        color: #C7D2FE;
+    }
 }
 
 .header-actions {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
+}
+
+@media (max-width: 400px) {
+    .app-header {
+        padding: 12px 12px;
+        gap: 8px;
+    }
+
+    .header-actions {
+        gap: 4px;
+    }
+}
+
+@media (max-width: 359px) {
+    .header-tribe-chip {
+        display: none;
+    }
 }
 
 /* Toast */
 .toast-container {
     position: fixed;
-    bottom: 80px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     gap: 8px;
-    z-index: 150;
+    /* Por encima de los modales (100) y del modo supermercado (9999) */
+    z-index: 10000;
     pointer-events: none;
     width: 90%;
     max-width: 360px;
@@ -1618,12 +1843,13 @@ input:focus,
     gap: 6px;
     flex-shrink: 0;
     transition: all 0.15s ease;
+    min-height: 44px;
 }
 
 .day-pill.active {
-    background: var(--primary);
+    background: var(--primary-solid);
     color: white;
-    border-color: var(--primary);
+    border-color: var(--primary-solid);
     box-shadow: 0 4px 10px rgba(79, 70, 229, 0.3);
 }
 
@@ -1632,7 +1858,21 @@ input:focus,
     color: var(--primary);
 }
 
-[data-theme="dark"] .day-pill,
+[data-theme="dark"] .day-pill {
+    background: #162032;
+    color: #CBD5E1;
+    border-color: #475569;
+}
+[data-theme="dark"] .day-pill.active {
+    background: #4F46E5;
+    color: #FFFFFF;
+    border-color: #818CF8;
+}
+[data-theme="dark"] .day-pill.is-today:not(.active) {
+    border-color: #818CF8;
+    color: #C7D2FE;
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .day-pill {
         background: #162032;
@@ -1640,7 +1880,7 @@ input:focus,
         border-color: #475569;
     }
     :root:not([data-theme="light"]) .day-pill.active {
-        background: #6366F1;
+        background: #4F46E5;
         color: #FFFFFF;
         border-color: #818CF8;
     }
@@ -1653,7 +1893,7 @@ input:focus,
 .pill-dot {
     width: 6px;
     height: 6px;
-    background: #10B981;
+    background: var(--success);
     border-radius: 50%;
 }
 
@@ -1672,7 +1912,7 @@ input:focus,
     width: 54px;
     height: 54px;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    background: linear-gradient(135deg, var(--primary-solid), var(--primary-solid-dark));
     color: white;
     border: none;
     box-shadow: 0 8px 20px rgba(79, 70, 229, 0.4);
@@ -1691,7 +1931,7 @@ input:focus,
 
 .fab-wrapper.open .fab-main-btn {
     transform: rotate(45deg);
-    background: var(--danger);
+    background: #B91C1C;
     box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4);
 }
 
@@ -1777,7 +2017,11 @@ input:focus,
     border-radius: 999px;
 }
 
-[data-theme="dark"] .daily-progress-card .progress-badge,
+[data-theme="dark"] .daily-progress-card .progress-badge {
+    background: rgba(129, 140, 248, 0.2);
+    color: #C7D2FE;
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .daily-progress-card .progress-badge {
         background: rgba(129, 140, 248, 0.2);
@@ -1832,7 +2076,11 @@ input:focus,
     background: rgba(79, 70, 229, 0.08);
 }
 
-[data-theme="dark"] .theme-option-btn.active,
+[data-theme="dark"] .theme-option-btn.active {
+    border-color: var(--primary);
+    background: rgba(129, 140, 248, 0.16);
+}
+
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .theme-option-btn.active {
         border-color: var(--primary);
@@ -1969,8 +2217,8 @@ input:focus,
 }
 
 .notif-checkbox {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     accent-color: var(--primary);
     cursor: pointer;
     margin: 0;
@@ -2002,7 +2250,8 @@ input:focus,
 
 .btn-notif-quick {
     padding: 6px 12px;
-    background: var(--primary);
+    min-height: 44px;
+    background: var(--primary-solid);
     color: white;
     border: none;
     border-radius: 8px;
@@ -2085,6 +2334,7 @@ input:focus,
     font-size: 13px;
     cursor: pointer;
     transition: background 0.15s ease;
+    min-height: 44px;
 }
 
 .btn-exit-supermarket:hover {
@@ -2147,6 +2397,11 @@ input:focus,
     user-select: none;
     transition: transform 0.12s ease, opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+    /* Es un <button>: ocupa todo el ancho y hereda la tipografía */
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: var(--text-main);
 }
 
 .supermarket-item-card:active {
@@ -2171,7 +2426,7 @@ input:focus,
 .supermarket-item-card.done {
     background: var(--card-secondary-bg);
     border-color: rgba(16, 185, 129, 0.2);
-    opacity: 0.65;
+    opacity: 0.85;
 }
 
 .supermarket-item-card.done .supermarket-checkbox {

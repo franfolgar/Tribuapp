@@ -681,34 +681,41 @@ function initNotifications() {
 function initFab() {
     if (!fabMainBtn || !fabWrapper) return;
 
+    const setFabAbierto = (abierto) => {
+        // Si el foco está en una opción que se va a ocultar, pasa al botón principal
+        if (!abierto && fabMenu?.contains(document.activeElement)) fabMainBtn.focus();
+        fabWrapper.classList.toggle('open', abierto);
+        fabMenu?.classList.toggle('hidden', !abierto);
+        fabMainBtn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+    };
+
     fabMainBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isOpen = fabWrapper.classList.toggle('open');
-        fabMenu?.classList.toggle('hidden', !isOpen);
+        setFabAbierto(!fabWrapper.classList.contains('open'));
     });
 
     document.addEventListener('click', (e) => {
-        if (!fabWrapper.contains(e.target)) {
-            fabWrapper.classList.remove('open');
-            fabMenu?.classList.add('hidden');
-        }
+        if (!fabWrapper.contains(e.target)) setFabAbierto(false);
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !fabWrapper.classList.contains('open')) return;
+        setFabAbierto(false);
+        fabMainBtn.focus();
     });
 
     fabAddShop?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddShoppingModal();
     });
 
     fabAddTask?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddTaskModal();
     });
 
     fabAddMeal?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddMealModal();
     });
 }
@@ -739,7 +746,7 @@ function openQuickAddShoppingModal() {
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary">Añadir a la compra</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -817,7 +824,7 @@ async function openQuickAddTaskModal() {
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" id="btn-quick-task-submit" class="btn-primary">Guardar Tarea</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -908,7 +915,7 @@ function openQuickAddMealModal() {
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary">Guardar plato</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -1637,22 +1644,79 @@ function showToast(message) {
     }, 2800);
 }
 
+// --- Modales accesibles: foco atrapado, Escape y vuelta al elemento que lo abrió ---
+const SELECTOR_ENFOCABLES = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+let modalFocoPrevio = null;
+
+function getEnfocables(contenedor) {
+    return [...contenedor.querySelectorAll(SELECTOR_ENFOCABLES)]
+        .filter(el => el.getClientRects().length > 0 && !el.closest('[inert]'));
+}
+
 function openModal(contentHtml) {
     if (!modalContainer || !modalCardContent) return;
+    const yaAbierto = !modalContainer.classList.contains('hidden');
+    if (!yaAbierto) modalFocoPrevio = document.activeElement;
     modalCardContent.innerHTML = contentHtml;
     modalContainer.classList.remove('hidden');
-    const closeBtn = modalCardContent.querySelector('.modal-close');
-    if (closeBtn) closeBtn.onclick = closeModal;
+    modalContainer.setAttribute('aria-modal', 'true');
+    const titulo = modalCardContent.querySelector('h3');
+    if (titulo) {
+        if (!titulo.id) titulo.id = 'modal-title';
+        modalContainer.setAttribute('aria-labelledby', titulo.id);
+    } else {
+        modalContainer.removeAttribute('aria-labelledby');
+    }
+    appView?.setAttribute('inert', '');
+    modalCardContent.querySelectorAll('.modal-close, [data-modal-close]').forEach(btn => {
+        btn.addEventListener('click', closeModal);
+    });
+    // Enfoca el primer control (no un campo de texto: en el móvil abriría el teclado)
+    const primero = getEnfocables(modalCardContent)[0];
+    if (primero) primero.focus({ preventScroll: true });
 }
 
 function closeModal() {
     if (!modalContainer) return;
+    const estabaAbierto = !modalContainer.classList.contains('hidden');
     modalContainer.classList.add('hidden');
     if (modalCardContent) modalCardContent.innerHTML = '';
+    if (!document.getElementById('supermarket-modal')) appView?.removeAttribute('inert');
+    if (!estabaAbierto) return;
+    let previo = modalFocoPrevio;
+    modalFocoPrevio = null;
+    // Si se abrió desde el menú del FAB (ya oculto), el foco vuelve al botón principal
+    if (previo && fabMenu?.contains(previo)) previo = fabMainBtn;
+    if (previo && previo.isConnected && typeof previo.focus === 'function') previo.focus();
 }
 
 modalContainer?.addEventListener('click', (e) => {
     if (e.target === modalContainer) closeModal();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!modalContainer || modalContainer.classList.contains('hidden')) return;
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModal();
+        return;
+    }
+    if (e.key !== 'Tab') return;
+    const enfocables = getEnfocables(modalCardContent);
+    if (!enfocables.length) {
+        e.preventDefault();
+        return;
+    }
+    const primero = enfocables[0];
+    const ultimo = enfocables[enfocables.length - 1];
+    const dentro = modalCardContent.contains(document.activeElement);
+    if (e.shiftKey && (!dentro || document.activeElement === primero)) {
+        e.preventDefault();
+        ultimo.focus();
+    } else if (!e.shiftKey && (!dentro || document.activeElement === ultimo)) {
+        e.preventDefault();
+        primero.focus();
+    }
 });
 
 function getLocalDateInputValue(date = new Date()) {
@@ -2915,8 +2979,7 @@ navItems.forEach((item) => {
 
 async function renderizarVista(vista) {
     closeModal();
-    const smModal = document.getElementById('supermarket-modal');
-    if (smModal) smModal.remove();
+    cerrarModoSupermercado();
 
     currentView = vista;
     const titles = { dashboard: 'Resumen', tareas: 'Tareas', menus: 'Menú', compra: 'Compra' };
@@ -3873,7 +3936,7 @@ function openRecipeModal(dish) {
         </ul>
         <div class="modal-footer">
             <button type="button" id="btn-add-recipe-to-shop" class="btn-primary">🛒 Pasar estos ingredientes a la compra</button>
-            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cerrar</button>
+            <button type="button" class="btn-secondary" data-modal-close>Cerrar</button>
         </div>
     `;
 
@@ -4156,7 +4219,7 @@ function openFridgeModal() {
 
             <div class="modal-footer" id="fridge-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary btn-ai">✨ Buscar recetas con IA</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
 
@@ -4317,7 +4380,35 @@ function openFridgeModal() {
 
 let supermarketWakeLock = null;
 
+function liberarWakeLockSupermercado() {
+    if (!supermarketWakeLock) return;
+    const lock = supermarketWakeLock;
+    supermarketWakeLock = null;
+    try { Promise.resolve(lock.release()).catch(() => {}); } catch {}
+}
+
+function onSupermercadoKeydown(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    cerrarModoSupermercado({ volverACompra: true });
+}
+
+// Cierra el modo supermercado (si está abierto) y libera el Wake Lock
+function cerrarModoSupermercado({ volverACompra = false } = {}) {
+    liberarWakeLockSupermercado();
+    document.removeEventListener('keydown', onSupermercadoKeydown);
+    const overlay = document.getElementById('supermarket-modal');
+    if (!overlay) return;
+    overlay.remove();
+    if (modalContainer?.classList.contains('hidden')) appView?.removeAttribute('inert');
+    if (volverACompra) {
+        renderCompraView();
+        document.getElementById('btn-open-supermarket')?.focus();
+    }
+}
+
 async function openSupermarketMode() {
+    if (document.getElementById('supermarket-modal')) return;
     if ('wakeLock' in navigator) {
         try {
             supermarketWakeLock = await navigator.wakeLock.request('screen');
@@ -4329,6 +4420,9 @@ async function openSupermarketMode() {
     const overlay = document.createElement('div');
     overlay.className = 'supermarket-overlay';
     overlay.id = 'supermarket-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'supermarket-title');
 
     function renderSupermarketContent() {
         const state = getAppState();
@@ -4355,21 +4449,25 @@ async function openSupermarketMode() {
                         <span>${items.length} pendientes</span>
                     </div>
                     ${items.map(it => `
-                        <div class="supermarket-item-card" data-sm-toggle="${escapeHtml(it.id)}">
-                            <div class="supermarket-checkbox">✓</div>
+                        <button type="button" class="supermarket-item-card" data-sm-toggle="${escapeHtml(it.id)}" aria-pressed="false">
+                            <span class="supermarket-checkbox" aria-hidden="true">✓</span>
                             <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
                             ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
-                        </div>
+                        </button>
                     `).join('')}
                 </div>
             `;
         });
 
+        // Al repintar se conserva el foco en la tarjeta (o botón) que lo tenía
+        const focoPrevio = overlay.contains(document.activeElement)
+            ? (document.activeElement.dataset.smToggle || document.activeElement.id || null) : null;
+
         overlay.innerHTML = `
             <div class="supermarket-header">
                 <div class="supermarket-header-top">
                     <div class="supermarket-title-box">
-                        <h3>🛒 Supermercado</h3>
+                        <h3 id="supermarket-title">🛒 Supermercado</h3>
                         ${supermarketWakeLock ? `<span class="supermarket-wakelock-pill">🟢 Pantalla encendida</span>` : ''}
                     </div>
                     <button type="button" class="btn-exit-supermarket" id="btn-close-sm">✕ Salir</button>
@@ -4393,11 +4491,11 @@ async function openSupermarketMode() {
                             <span>✅ Ya en el carrito (${completedItems.length})</span>
                         </div>
                         ${completedItems.map(it => `
-                            <div class="supermarket-item-card done" data-sm-toggle="${escapeHtml(it.id)}">
-                                <div class="supermarket-checkbox">✓</div>
+                            <button type="button" class="supermarket-item-card done" data-sm-toggle="${escapeHtml(it.id)}" aria-pressed="true">
+                                <span class="supermarket-checkbox" aria-hidden="true">✓</span>
                                 <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
                                 ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
-                            </div>
+                            </button>
                         `).join('')}
                     </div>
                 ` : ''}
@@ -4405,13 +4503,14 @@ async function openSupermarketMode() {
         `;
 
         overlay.querySelector('#btn-close-sm')?.addEventListener('click', () => {
-            if (supermarketWakeLock) {
-                try { supermarketWakeLock.release(); } catch {}
-                supermarketWakeLock = null;
-            }
-            overlay.remove();
-            renderCompraView();
+            cerrarModoSupermercado({ volverACompra: true });
         });
+
+        if (focoPrevio) {
+            const destino = [...overlay.querySelectorAll('[data-sm-toggle], #btn-close-sm')]
+                .find(el => el.dataset.smToggle === focoPrevio || el.id === focoPrevio);
+            destino?.focus({ preventScroll: false });
+        }
 
         overlay.querySelectorAll('[data-sm-toggle]').forEach(card => {
             card.addEventListener('click', () => {
@@ -4427,6 +4526,9 @@ async function openSupermarketMode() {
     overlay.refrescar = renderSupermarketContent;
     renderSupermarketContent();
     document.body.appendChild(overlay);
+    appView?.setAttribute('inert', '');
+    document.addEventListener('keydown', onSupermercadoKeydown);
+    overlay.querySelector('#btn-close-sm')?.focus();
 }
 
 
@@ -4488,7 +4590,7 @@ function openPantryReviewModal() {
         </div>
         <div class="modal-footer">
             <button type="button" id="btn-confirm-pantry-to-shop" class="btn-primary">Añadir a la lista de compra</button>
-            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
         </div>
     `;
 
@@ -4616,7 +4718,7 @@ function openAIGeneratorModal() {
 
             <div class="modal-footer" id="ai-modal-footer">
                 <button type="submit" class="btn-primary btn-ai">✨ Generar menú inteligente</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
