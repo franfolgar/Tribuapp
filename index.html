@@ -7,7 +7,7 @@
     <meta name="description" content="Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.">
     <meta property="og:title" content="Tribuapp - Gestión Familiar">
     <meta property="og:description" content="Gestiona tu hogar de forma inteligente: tareas familiares, menú semanal y lista de la compra.">
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#4F46E5">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,8 +15,10 @@
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Tribuapp">
-    <link rel="apple-touch-icon" href="icon-192.png">
-    <link rel="stylesheet" href="style.css">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="modulepreload" href="/vendor/supabase-js.mjs">
     <script>
         window.__INITIAL_URL__ = window.location.href;
         window.__INITIAL_HASH__ = window.location.hash;
@@ -239,6 +241,7 @@
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
     <!-- Lógica de la aplicación cargada como módulo ES -->
-    <script type="module" src="app.js"></script>
+    <script src="/register-sw.js" defer></script>
+    <script type="module" src="/app.js"></script>
 </body>
 </html>
