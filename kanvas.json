@@ -27,7 +27,14 @@
       "group": "SG",
       "at": "2026-10-29T15:24:11Z",
       "by": "agent",
-      "desc": "Nueva migración: RLS de tareas_catalogo, invitaciones con usos/revocación/expulsados, RPC completar_tarea atómica y puntos en BD, grants sin TRUNCATE, límites de longitud, realtime. Verificada en producción dentro de una transacción con ROLLBACK; se aplica sólo con tu visto bueno."
+      "desc": "Nueva migración: RLS de tareas_catalogo, invitaciones con usos/revocación/expulsados, RPC completar_tarea atómica y puntos en BD, grants sin TRUNCATE, límites de longitud, realtime. Verificada en producción dentro de una transacción con ROLLBACK; se aplica sólo con tu visto bueno.",
+      "notes": [
+        {
+          "at": "2026-10-29T20:36:09Z",
+          "by": "agent",
+          "text": "Migración en supabase/migrations/20261029120000_harden_tasks_invites_grants.sql y pruebas en supabase/tests/. Pendiente: ejecutar las pruebas con ROLLBACK contra producción (el aviso de Supabase no llegó a confirmarse desde el móvil) y, con visto bueno, aplicar la migración y desplegar generate-menu a la vez que el frontend."
+        }
+      ]
     },
     {
       "id": "SG-02",
