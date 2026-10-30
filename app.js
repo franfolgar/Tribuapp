@@ -987,9 +987,10 @@ const DEMO_SHOPPING_IDS = new Set(defaultState.shopping.map(item => item.id));
 const DEMO_MENU_IDS = new Set(defaultState.menu.map(item => item.id));
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Sólo por id: el menú del chef que devuelve la IA usa los mismos nombres que la demo,
+// así que comparar por nombre ocultaría el menú real de la familia.
 function esPlatoDemo(item) {
-    return DEMO_MENU_IDS.has(item?.id) ||
-        defaultState.menu.some(d => d.dia === item?.dia && d.tipo === item?.tipo && d.nombre === item?.nombre);
+    return DEMO_MENU_IDS.has(item?.id);
 }
 
 function getAppState() {
