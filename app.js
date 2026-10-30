@@ -2261,11 +2261,11 @@ async function processRecoveryInput(rawInput) {
 }
 
 if (supabaseAppUrlPreview) {
-    supabaseAppUrlPreview.value = window.location.origin;
+    supabaseAppUrlPreview.value = getPublicAppUrl();
 }
 
 btnCopyAppUrl?.addEventListener('click', async () => {
-    const url = window.location.origin;
+    const url = getPublicAppUrl();
     try {
         await navigator.clipboard.writeText(url);
         btnCopyAppUrl.innerText = '¡Copiado!';

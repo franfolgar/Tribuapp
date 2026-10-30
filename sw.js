@@ -1,20 +1,22 @@
-const CACHE_NAME = 'tribuapp-v12';
+const CACHE_NAME = 'tribuapp-v13';
 // Todas las navegaciones se guardan bajo esta única clave (sin query: los
 // enlaces de invitación llevan tokens que no deben quedar en Cache Storage).
-const SHELL_URL = '/index.html';
+// Rutas relativas a la carpeta del SW: la app puede servirse en una subcarpeta (GitHub Pages).
+const BASE_URL = new URL('./', self.location).href;
+const SHELL_URL = BASE_URL + 'index.html';
 const NETWORK_TIMEOUT_MS = 3500;
 const PRECACHE_URLS = [
-  SHELL_URL,
-  '/style.css',
-  '/app.js',
-  '/register-sw.js',
-  '/vendor/supabase-js.mjs',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-maskable.png',
-  '/apple-touch-icon.png'
-];
+  'index.html',
+  'style.css',
+  'app.js',
+  'register-sw.js',
+  'vendor/supabase-js.mjs',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png',
+  'icon-maskable.png',
+  'apple-touch-icon.png'
+].map((path) => BASE_URL + path);
 
 // Tipo de contenido esperado según la extensión. Lo que no esté aquí no se cachea,
 // y tampoco una respuesta cuyo content-type no coincida (p. ej. el fallback SPA
@@ -158,7 +160,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname === '/sw.js') return;
+  if (url.href === new URL('sw.js', BASE_URL).href) return;
 
   const expectedType = expectedTypeFor(url.pathname);
   if (!expectedType) return;
