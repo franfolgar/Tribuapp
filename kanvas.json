@@ -38,6 +38,11 @@
           "at": "2026-10-30T07:53:12Z",
           "by": "agent",
           "text": "2026-10-30: pruebas con ROLLBACK contra producción 52/52 correctas; verificado después que no quedó nada aplicado. Pendiente: visto bueno para aplicar la migración y desplegar generate-menu."
+        },
+        {
+          "at": "2026-10-30T08:02:01Z",
+          "by": "agent",
+          "text": "2026-10-30: migración aplicada en producción (20261030075922) y generate-menu v7 desplegada. Frontend en PR #2 (https://github.com/franfolgar/Tribuapp/pull/2)."
         }
       ]
     },
