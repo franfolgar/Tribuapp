@@ -1,19 +1,83 @@
-const CACHE_NAME = 'tribuapp-v11';
+const CACHE_NAME = 'tribuapp-v13';
+// Todas las navegaciones se guardan bajo esta única clave (sin query: los
+// enlaces de invitación llevan tokens que no deben quedar en Cache Storage).
+// Rutas relativas a la carpeta del SW: la app puede servirse en una subcarpeta (GitHub Pages).
+const BASE_URL = new URL('./', self.location).href;
+const SHELL_URL = BASE_URL + 'index.html';
+const NETWORK_TIMEOUT_MS = 3500;
 const PRECACHE_URLS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
-];
+  'index.html',
+  'style.css',
+  'app.js',
+  'register-sw.js',
+  'vendor/supabase-js.mjs',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png',
+  'icon-maskable.png',
+  'apple-touch-icon.png'
+].map((path) => BASE_URL + path);
+
+// Tipo de contenido esperado según la extensión. Lo que no esté aquí no se cachea,
+// y tampoco una respuesta cuyo content-type no coincida (p. ej. el fallback SPA
+// que devuelve index.html con 200 para una ruta inexistente).
+const EXPECTED_TYPES = {
+  html: 'text/html',
+  js: 'javascript',
+  mjs: 'javascript',
+  css: 'text/css',
+  json: 'json',
+  webmanifest: 'json',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  svg: 'image/svg+xml',
+  ico: 'image/',
+  webp: 'image/webp',
+  woff2: 'font/woff2'
+};
+
+function expectedTypeFor(pathname) {
+  const match = /\.([a-z0-9]+)$/i.exec(pathname);
+  return match ? EXPECTED_TYPES[match[1].toLowerCase()] || null : null;
+}
+
+function isCacheable(response, expectedType) {
+  if (!response || !response.ok || response.status !== 200 || response.type !== 'basic' || response.redirected) return false;
+  if (!expectedType) return false;
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  return contentType.includes(expectedType);
+}
+
+// Copia sin la URL original (que podría llevar ?invite=...)
+async function cleanCopy(response) {
+  const body = await response.clone().blob();
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  });
+}
+
+async function putInCache(key, response) {
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(key, await cleanCopy(response));
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_URLS);
-    }).then(() => self.skipWaiting())
+    Promise.all(PRECACHE_URLS.map(async (path) => {
+      try {
+        const response = await fetch(path, { cache: 'reload' });
+        if (isCacheable(response, expectedTypeFor(path))) {
+          await putInCache(path, response);
+        } else {
+          console.warn('[sw] No se precachea (respuesta inesperada):', path);
+        }
+      } catch (error) {
+        console.warn('[sw] No se pudo precachear:', path, error);
+      }
+    })).then(() => self.skipWaiting())
   );
 });
 
@@ -31,40 +95,83 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+// Red primero; si la red tarda más de NETWORK_TIMEOUT_MS o falla, caché.
+// Si vence el plazo y no hay nada en caché, se sigue esperando a la red.
+function networkFirst(request, cacheKey, expectedType) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (response) => {
+      if (!settled) {
+        settled = true;
+        resolve(response);
+      }
+    };
 
-  // Do not intercept non-GET or API or Supabase auth calls
-  if (event.request.method !== 'GET' || url.pathname.startsWith('/api/') || url.origin !== location.origin) {
+    const network = fetch(request).then((response) => {
+      if (isCacheable(response, expectedType)) {
+        putInCache(cacheKey, response).catch(() => {});
+      }
+      return response;
+    });
+
+    const timer = setTimeout(async () => {
+      const cached = await caches.match(cacheKey);
+      if (cached) finish(cached);
+    }, NETWORK_TIMEOUT_MS);
+
+    network.then((response) => {
+      clearTimeout(timer);
+      finish(response);
+    }).catch(async (error) => {
+      clearTimeout(timer);
+      const cached = await caches.match(cacheKey);
+      if (cached) finish(cached);
+      else if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+  });
+}
+
+async function cacheFirst(request, cacheKey, expectedType) {
+  const cached = await caches.match(cacheKey);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (isCacheable(response, expectedType)) {
+    await putInCache(cacheKey, response).catch(() => {});
+  }
+  return response;
+}
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+
+  // Sólo GET del propio origen; nada de /api ni de otros orígenes (Supabase, etc.)
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
     return;
   }
 
-  event.respondWith(
-    (async () => {
-      const cachedResponse = await caches.match(event.request);
-      const isAppShell = event.request.mode === 'navigate' ||
-        /\/(index\.html|app\.js|style\.css|manifest\.json)$/.test(url.pathname);
-      if (!isAppShell && cachedResponse) return cachedResponse;
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      networkFirst(new Request(request, { cache: 'reload' }), SHELL_URL, EXPECTED_TYPES.html)
+    );
+    return;
+  }
 
-      try {
-        const networkRequest = isAppShell
-          ? new Request(event.request, { cache: 'reload' })
-          : event.request;
-        const networkResponse = await fetch(networkRequest);
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-          const cache = await caches.open(CACHE_NAME);
-          await cache.put(event.request, networkResponse.clone());
-        }
-        return networkResponse;
-      } catch (error) {
-        if (cachedResponse) return cachedResponse;
-        if (isAppShell && event.request.mode === 'navigate') {
-          return caches.match(new URL('./index.html', self.registration.scope).toString());
-        }
-        throw error;
-      }
-    })()
-  );
+  if (url.href === new URL('sw.js', BASE_URL).href) return;
+
+  const expectedType = expectedTypeFor(url.pathname);
+  if (!expectedType) return;
+
+  // Clave sin query para no acumular variantes ni guardar parámetros
+  const cacheKey = url.origin + url.pathname;
+  if (expectedType.startsWith('image/') || expectedType.startsWith('font/')) {
+    event.respondWith(cacheFirst(request, cacheKey, expectedType));
+  } else {
+    event.respondWith(networkFirst(new Request(request, { cache: 'no-cache' }), cacheKey, expectedType));
+  }
 });
 
 // --- PUSH & NOTIFICATIONS MANAGEMENT VIA SERVICE WORKER ---

@@ -1,5 +1,5 @@
-// Importamos Supabase directamente desde el CDN para módulos ES
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+// supabase-js 2.118.0 servido desde el propio origen (ver vendor/README.md) para funcionar sin conexión
+import { createClient } from './vendor/supabase-js.mjs';
 
 const SUPABASE_URL = 'https://skdlkrcdwhxfuwukvoce.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_UIZX50yoepGiITkC2hREFQ_elTXm7hV';
@@ -669,49 +669,53 @@ function openNotificationsModal() {
 function initNotifications() {
     btnNotificationsToggle?.addEventListener('click', openNotificationsModal);
 
-    // Escuchar mensajes provenientes del Service Worker (ej. clic en notificación que solicita cambiar de vista)
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.addEventListener('message', (event) => {
-            if (event.data && event.data.type === 'NAVIGATE_VIEW') {
-                const targetView = event.data.targetView || 'dashboard';
-                renderizarVista(targetView);
-            }
-        });
-    }
+    // Al pulsar una notificación, el Service Worker pide abrir la vista correspondiente
+    navigator.serviceWorker?.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'NAVIGATE_VIEW') {
+            renderizarVista(event.data.targetView || 'dashboard');
+        }
+    });
 }
 
 // --- Floating Action Button (FAB) ---
 function initFab() {
     if (!fabMainBtn || !fabWrapper) return;
 
+    const setFabAbierto = (abierto) => {
+        // Si el foco está en una opción que se va a ocultar, pasa al botón principal
+        if (!abierto && fabMenu?.contains(document.activeElement)) fabMainBtn.focus();
+        fabWrapper.classList.toggle('open', abierto);
+        fabMenu?.classList.toggle('hidden', !abierto);
+        fabMainBtn.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+    };
+
     fabMainBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isOpen = fabWrapper.classList.toggle('open');
-        fabMenu?.classList.toggle('hidden', !isOpen);
+        setFabAbierto(!fabWrapper.classList.contains('open'));
     });
 
     document.addEventListener('click', (e) => {
-        if (!fabWrapper.contains(e.target)) {
-            fabWrapper.classList.remove('open');
-            fabMenu?.classList.add('hidden');
-        }
+        if (!fabWrapper.contains(e.target)) setFabAbierto(false);
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !fabWrapper.classList.contains('open')) return;
+        setFabAbierto(false);
+        fabMainBtn.focus();
     });
 
     fabAddShop?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddShoppingModal();
     });
 
     fabAddTask?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddTaskModal();
     });
 
     fabAddMeal?.addEventListener('click', () => {
-        fabWrapper.classList.remove('open');
-        fabMenu?.classList.add('hidden');
+        setFabAbierto(false);
         openQuickAddMealModal();
     });
 }
@@ -742,7 +746,7 @@ function openQuickAddShoppingModal() {
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary">Añadir a la compra</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -750,29 +754,27 @@ function openQuickAddShoppingModal() {
     openModal(html);
     setTimeout(() => document.getElementById('quick-shop-name')?.focus(), 100);
 
-    document.getElementById('quick-shop-form')?.addEventListener('submit', (e) => {
+    document.getElementById('quick-shop-name')?.addEventListener('input', (event) => event.target.setCustomValidity(''));
+
+    document.getElementById('quick-shop-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const nombre = document.getElementById('quick-shop-name').value.trim();
+        const nameInput = document.getElementById('quick-shop-name');
+        const nombre = nameInput.value.trim();
         const cantidad = document.getElementById('quick-shop-cant').value.trim();
         const secVal = document.getElementById('quick-shop-sec').value;
         const seccion = secVal === 'auto' ? getAisleCategory(nombre) : secVal;
 
         if (!nombre) return;
-        const newItem = {
-            id: crypto.randomUUID(),
-            nombre,
-            cantidad,
-            seccion,
-            comprado: false
-        };
-        state.shopping.push(newItem);
-        saveAppState(state);
-        persistShoppingItemToSupabase(newItem, 'upsert');
-        showToast(`🛒 "${nombre}" añadido a la compra`);
-        closeModal();
-        if (currentView === 'dashboard' || currentView === 'compra') {
-            renderizarVista(currentView);
+        const state = getAppState();
+        const exists = state.shopping.some((item) => item.nombre.toLocaleLowerCase() === nombre.toLocaleLowerCase() && !item.comprado);
+        if (exists) {
+            nameInput.setCustomValidity('Este producto ya está en la lista.');
+            nameInput.reportValidity();
+            return;
         }
+        closeModal();
+        const added = await anadirProductosACompra([{ nombre, cantidad, seccion }]);
+        if (added > 0) showToast(`🛒 "${nombre}" añadido a la compra`);
     });
 }
 
@@ -793,7 +795,7 @@ async function openQuickAddTaskModal() {
         </div>
         <form id="quick-task-form">
             <label for="quick-task-name">Nombre de la tarea</label>
-            <input type="text" id="quick-task-name" placeholder="Ej. Poner lavadora, pasar aspiradora..." required autofocus>
+            <input type="text" id="quick-task-name" placeholder="Ej. Poner lavadora, pasar aspiradora..." maxlength="120" required autofocus>
 
             <div class="form-row-2">
                 <div>
@@ -815,14 +817,14 @@ async function openQuickAddTaskModal() {
                     <option value="Puntual">Puntual (una sola vez)</option>
                     <option value="Diaria">🔄 Diaria (todos los días)</option>
                     <option value="Semanal">🔄 Semanal (cada 7 días)</option>
-                    <option value="Quincenal">🔄 Quincenal</option>
-                    <option value="Mensual">🔄 Mensual</option>
+                    <option value="Quincenal">🔄 Quincenal (cada 14 días)</option>
+                    <option value="Mensual">🔄 Mensual (mismo día cada mes)</option>
                 </select>
             </div>
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" id="btn-quick-task-submit" class="btn-primary">Guardar Tarea</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -833,56 +835,28 @@ async function openQuickAddTaskModal() {
     document.getElementById('quick-task-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const submitBtn = document.getElementById('btn-quick-task-submit');
-        submitBtn.disabled = true;
-        submitBtn.innerText = 'Guardando...';
-
-        const nombre = document.getElementById('quick-task-name').value.trim();
+        const nombreInput = document.getElementById('quick-task-name');
+        const nombre = nombreInput.value.trim().slice(0, 120);
         const asignadoA = document.getElementById('quick-task-assign').value || null;
         const fecha = document.getElementById('quick-task-date').value || today;
         const recurrencia = document.getElementById('quick-task-recurrence').value || 'Puntual';
 
-        if (!nombre) return;
-
-        let inserted = false;
-        try {
-            const { data: catData, error: catError } = await supabase
-                .from('tareas_catalogo')
-                .insert({
-                    familia_id: currentProfile?.familia_id || null,
-                    nombre,
-                    recurrencia_sugerida: recurrencia
-                })
-                .select('id')
-                .single();
-
-            if (!catError && catData?.id) {
-                const { error: asigError } = await supabase
-                    .from('tareas_asignadas')
-                    .insert({
-                        familia_id: currentProfile?.familia_id,
-                        tarea_id: catData.id,
-                        asignado_a: asignadoA,
-                        fecha_objetivo: fecha,
-                        recurrencia,
-                        estado: 'Pendiente'
-                    });
-                if (!asigError) inserted = true;
-            }
-        } catch {
-            inserted = false;
+        if (!nombre) {
+            showToast('Escribe el nombre de la tarea.');
+            nombreInput.focus();
+            return;
         }
 
-        if (!inserted) {
-            const currentTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-            currentTasks.push({
-                id: crypto.randomUUID(),
-                fecha_objetivo: fecha,
-                estado: 'Pendiente',
-                asignado_a: asignadoA,
-                recurrencia,
-                tareas_catalogo: { nombre }
-            });
-            saveToStorage(STORAGE_KEYS.tasks, currentTasks);
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Guardando...';
+        try {
+            await crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia });
+        } catch (error) {
+            console.error('Error al crear la tarea:', error);
+            showToast(`⚠️ No se pudo crear la tarea: ${error.message || 'error de conexión'}`);
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Guardar Tarea';
+            return;
         }
 
         showToast(`✅ Tarea "${nombre}" creada`);
@@ -941,7 +915,7 @@ function openQuickAddMealModal() {
 
             <div class="modal-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary">Guardar plato</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
@@ -949,7 +923,7 @@ function openQuickAddMealModal() {
     openModal(html);
     setTimeout(() => document.getElementById('quick-meal-name')?.focus(), 100);
 
-    document.getElementById('quick-meal-form')?.addEventListener('submit', (e) => {
+    document.getElementById('quick-meal-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const nombre = document.getElementById('quick-meal-name').value.trim();
         const dia = document.getElementById('quick-meal-day').value;
@@ -959,35 +933,15 @@ function openQuickAddMealModal() {
         const ingredientes = rawIng ? rawIng.split(',').map(s => s.trim()).filter(Boolean) : [];
 
         if (!nombre) return;
-        const state = getAppState();
-        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
-        const newMeal = {
-            id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
-            dia,
-            tipo,
-            nombre,
-            tiempo,
-            ingredientes
-        };
-        if (existingIdx >= 0) {
-            state.menu[existingIdx] = newMeal;
-        } else {
-            state.menu.push(newMeal);
-        }
-        saveAppState(state);
-        persistMenuToSupabase(state.menu);
-        showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
         closeModal();
+        if (!await guardarPlatoEnMenu({ dia, tipo, nombre, tiempo, ingredientes })) return;
+        showToast(`🍽️ "${nombre}" añadido al menú (${dia})`);
 
         if (dia === todayDayName) {
             showServiceWorkerNotification(`🍽️ Plato para hoy (${tipo})`, {
                 body: `Se ha añadido "${nombre}" al menú familiar de hoy.`,
                 data: { view: 'menus', url: './' }
             });
-        }
-
-        if (currentView === 'dashboard' || currentView === 'menus') {
-            renderizarVista(currentView);
         }
     });
 }
@@ -1028,10 +982,29 @@ function saveToStorage(key, value) {
     }
 }
 
+// Identificadores y platos de la demo: una familia real nunca debe verlos ni subirlos.
+const DEMO_SHOPPING_IDS = new Set(defaultState.shopping.map(item => item.id));
+const DEMO_MENU_IDS = new Set(defaultState.menu.map(item => item.id));
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function esPlatoDemo(item) {
+    return DEMO_MENU_IDS.has(item?.id) ||
+        defaultState.menu.some(d => d.dia === item?.dia && d.tipo === item?.tipo && d.nombre === item?.nombre);
+}
+
 function getAppState() {
-    const stored = readFromStorage(STORAGE_KEYS.app, defaultState) || {};
-    const rawShopping = Array.isArray(stored.shopping) && stored.shopping.length ? stored.shopping : defaultState.shopping;
-    const rawMenu = Array.isArray(stored.menu) && stored.menu.length ? stored.menu : defaultState.menu;
+    const stored = readFromStorage(STORAGE_KEYS.app, null);
+    const tieneFamilia = !!currentProfile?.familia_id;
+    // La demo sólo se usa si no hay nada guardado y no hay una familia real detrás.
+    const base = stored && typeof stored === 'object'
+        ? stored
+        : (tieneFamilia ? { shopping: [], menu: [] } : defaultState);
+    let rawShopping = Array.isArray(base.shopping) ? base.shopping.filter(Boolean) : [];
+    let rawMenu = Array.isArray(base.menu) ? base.menu.filter(Boolean) : [];
+    if (tieneFamilia) {
+        rawShopping = rawShopping.filter(item => !DEMO_SHOPPING_IDS.has(item.id));
+        rawMenu = rawMenu.filter(item => !DEMO_MENU_IDS.has(item.id));
+    }
 
     const shopping = rawShopping.map(item => ({
         ...item,
@@ -1055,127 +1028,583 @@ function saveAppState(state) {
     return false;
 }
 
+function compraDesdeFila(s) {
+    return {
+        id: s.id,
+        nombre: s.nombre,
+        cantidad: s.cantidad || '',
+        seccion: s.seccion || getAisleCategory(s.nombre),
+        comprado: !!s.comprado
+    };
+}
+
+function platoDesdeFila(m) {
+    return {
+        id: m.id,
+        dia: m.dia,
+        tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: m.nombre,
+        tiempo: m.tiempo || '25 min',
+        ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
+    };
+}
+
+// Descarga menú y compra de la familia. Supabase manda: si la tabla está vacía, la lista local queda vacía.
 async function syncFamilyDataFromSupabase() {
-    if (!currentProfile?.familia_id) return;
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) {
+        detenerSincronizacionTiempoReal();
+        return false;
+    }
+    let ok = false;
     try {
+        if (!(await comprobarPertenenciaFamilia())) return false;
         const [menuRes, shopRes] = await Promise.all([
             supabase.from('familias_menus')
                 .select('*')
-                .eq('familia_id', currentProfile.familia_id),
+                .eq('familia_id', familiaId),
             supabase.from('familias_compras')
                 .select('*')
-                .eq('familia_id', currentProfile.familia_id)
+                .eq('familia_id', familiaId)
                 .order('creado_en', { ascending: true })
         ]);
+        if (currentProfile?.familia_id !== familiaId) return false;
 
         const state = getAppState();
         let stateChanged = false;
 
-        if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length > 0) {
-            state.menu = menuRes.data.map(m => ({
-                id: m.id,
-                dia: m.dia,
-                tipo: m.tipo,
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
+        if (!menuRes.error && Array.isArray(menuRes.data)) {
+            state.menu = menuRes.data.filter(m => !esPlatoDemo(m)).map(platoDesdeFila);
             stateChanged = true;
-        } else if (!menuRes.error && Array.isArray(menuRes.data) && menuRes.data.length === 0 && state.menu.length > 0) {
-            // Migración inicial: subir menú local existente a Supabase
-            await persistMenuToSupabase(state.menu);
+        } else if (menuRes.error) {
+            console.warn('No se pudo descargar el menú de la familia:', menuRes.error);
         }
 
         if (!shopRes.error && Array.isArray(shopRes.data)) {
-            state.shopping = shopRes.data.map(s => ({
-                id: s.id,
-                nombre: s.nombre,
-                cantidad: s.cantidad || '',
-                seccion: s.seccion || getAisleCategory(s.nombre),
-                comprado: !!s.comprado
-            }));
+            state.shopping = shopRes.data.filter(s => !DEMO_SHOPPING_IDS.has(s.id)).map(compraDesdeFila);
             stateChanged = true;
+        } else if (shopRes.error) {
+            console.warn('No se pudo descargar la compra de la familia:', shopRes.error);
         }
 
         if (stateChanged) {
             saveToStorage(STORAGE_KEYS.app, state);
         }
+        ok = !menuRes.error && !shopRes.error;
     } catch (e) {
         console.warn('Error sincronizando datos familiares de Supabase:', e);
     }
+    iniciarSincronizacionTiempoReal(familiaId);
+    return ok;
 }
 
-async function persistMenuToSupabase(menuList) {
-    if (!currentProfile?.familia_id || !Array.isArray(menuList) || !menuList.length) return;
-    try {
-        const records = menuList.map(item => ({
-            familia_id: currentProfile.familia_id,
-            dia: item.dia,
-            tipo: item.tipo,
-            nombre: item.nombre,
-            tiempo: item.tiempo || '25 min',
-            ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
-            actualizado_en: new Date().toISOString()
-        }));
-        await supabase.from('familias_menus').upsert(records, { onConflict: 'familia_id,dia,tipo' });
-    } catch (err) {
-        console.warn('No se pudo guardar el menú en Supabase:', err);
-    }
+function filaMenuParaSupabase(item) {
+    return {
+        familia_id: currentProfile.familia_id,
+        dia: item.dia,
+        tipo: item.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: item.nombre,
+        tiempo: item.tiempo || '25 min',
+        ingredientes: Array.isArray(item.ingredientes) ? item.ingredientes : [],
+        actualizado_en: new Date().toISOString()
+    };
 }
 
-async function persistShoppingItemToSupabase(item, action = 'upsert') {
-    if (!currentProfile?.familia_id || !item?.id) return;
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id);
-    if (!isUuid) {
-        if (action === 'delete') return;
-        const oldId = item.id;
-        item.id = crypto.randomUUID();
-        const state = getAppState();
-        const found = state.shopping.find(s => s.id === oldId || s.nombre === item.nombre);
-        if (found) found.id = item.id;
-        saveAppState(state);
-        action = 'upsert';
-    }
+// Guarda sólo los platos indicados (uno al editar; los 12 al regenerar el menú completo).
+// Devuelve null si se guardó o el error de Supabase.
+async function persistMenuToSupabase(platos) {
+    const lista = (Array.isArray(platos) ? platos : [platos]).filter(Boolean);
+    if (!currentProfile?.familia_id || !lista.length) return null;
     try {
-        if (action === 'delete') {
-            await supabase.from('familias_compras').delete().eq('id', item.id);
-        } else if (action === 'update') {
-            await supabase.from('familias_compras').update({
-                nombre: item.nombre,
-                cantidad: item.cantidad || '',
-                seccion: item.seccion || 'General',
-                comprado: !!item.comprado,
-                actualizado_en: new Date().toISOString()
-            }).eq('id', item.id);
-        } else {
-            await supabase.from('familias_compras').upsert({
-                id: item.id,
-                familia_id: currentProfile.familia_id,
-                nombre: item.nombre,
-                cantidad: item.cantidad || '',
-                seccion: item.seccion || 'General',
-                comprado: !!item.comprado,
-                actualizado_en: new Date().toISOString()
+        const { data, error } = await supabase.from('familias_menus')
+            .upsert(lista.map(filaMenuParaSupabase), { onConflict: 'familia_id,dia,tipo' })
+            .select('id, dia, tipo');
+        if (error) return error;
+        // Adoptamos el id de la base de datos para casar después los eventos en tiempo real.
+        if (Array.isArray(data) && data.length) {
+            const state = getAppState();
+            let cambiado = false;
+            data.forEach((fila) => {
+                const local = state.menu.find(m => m.dia === fila.dia && m.tipo === fila.tipo);
+                if (local && local.id !== fila.id) {
+                    local.id = fila.id;
+                    cambiado = true;
+                }
             });
+            if (cambiado) saveToStorage(STORAGE_KEYS.app, state);
         }
+        return null;
     } catch (err) {
-        console.warn('No se pudo sincronizar la compra en Supabase:', err);
+        return err;
     }
 }
 
-
-function getKarmaPoints() {
-    return readFromStorage(STORAGE_KEYS.karma, {
-        '31b888de-c2bf-4077-903f-874ad3bc9263': 50
-    }) || {};
+function filaCompraParaSupabase(item) {
+    return {
+        id: item.id,
+        familia_id: currentProfile.familia_id,
+        nombre: item.nombre,
+        cantidad: item.cantidad || '',
+        seccion: item.seccion || 'General',
+        comprado: !!item.comprado,
+        actualizado_en: new Date().toISOString()
+    };
 }
 
-function addKarmaPoints(memberId, points = 10) {
-    const karma = getKarmaPoints();
-    const id = memberId || currentProfile?.id || 'user';
-    karma[id] = (karma[id] || 0) + points;
-    saveToStorage(STORAGE_KEYS.karma, karma);
-    return karma[id];
+// item puede ser un producto o una lista (para 'upsert' y 'delete'). En 'update' sólo se envían los campos de `cambios`.
+// Devuelve null si se guardó o el error de Supabase.
+async function persistShoppingItemToSupabase(item, action = 'upsert', cambios = null) {
+    const items = (Array.isArray(item) ? item : [item]).filter(it => it?.id);
+    if (!currentProfile?.familia_id || !items.length) return null;
+    try {
+        let res;
+        if (action === 'delete') {
+            const ids = items.map(it => it.id).filter(id => UUID_REGEX.test(id));
+            if (!ids.length) return null;
+            res = await supabase.from('familias_compras').delete().in('id', ids);
+        } else if (action === 'update') {
+            if (!UUID_REGEX.test(items[0].id)) return null;
+            res = await supabase.from('familias_compras')
+                .update({ ...(cambios || { comprado: !!items[0].comprado }), actualizado_en: new Date().toISOString() })
+                .eq('id', items[0].id);
+        } else {
+            res = await supabase.from('familias_compras').upsert(items.map(filaCompraParaSupabase));
+        }
+        return res?.error || null;
+    } catch (err) {
+        return err;
+    }
+}
+
+function esErrorDePermisos(error) {
+    return error?.code === '42501' || error?.status === 401 || error?.status === 403;
+}
+
+function mostrarErrorGuardado(texto, error) {
+    console.warn(texto, error);
+    if (esErrorDePermisos(error)) {
+        showToast(`⚠️ ${texto} No tienes permiso en esta familia.`);
+        comprobarPertenenciaFamilia();
+        return;
+    }
+    showToast(`⚠️ ${texto} Revisa tu conexión e inténtalo de nuevo.`);
+}
+
+// Si un admin nos ha quitado de la familia, volver al onboarding sin esperar a recargar.
+// Devuelve false si ya no pertenecemos a la familia.
+async function comprobarPertenenciaFamilia() {
+    if (!currentUser || !currentProfile?.familia_id) return true;
+    const { data: perfil, error } = await supabase.from('usuarios').select('familia_id').eq('id', currentUser.id).maybeSingle();
+    if (error || perfil?.familia_id === currentProfile.familia_id) return true;
+    currentProfile = { ...currentProfile, familia_id: perfil?.familia_id || null };
+    detenerSincronizacionTiempoReal();
+    if (perfil?.familia_id) {
+        await mostrarApp();
+    } else {
+        mostrarOnboarding('Ya no perteneces a esta familia. Crea una tribu nueva o únete con una invitación.');
+    }
+    return false;
+}
+
+// --- Operaciones de compra y menú: se aplican al momento y se deshacen si Supabase falla ---
+
+async function anadirProductosACompra(productos) {
+    const state = getAppState();
+    const nuevos = [];
+    productos.forEach((p) => {
+        const nombre = String(p?.nombre || '').trim();
+        if (!nombre) return;
+        const repetido = state.shopping.concat(nuevos)
+            .some(s => s.nombre.toLocaleLowerCase() === nombre.toLocaleLowerCase() && !s.comprado);
+        if (repetido) return;
+        nuevos.push({
+            id: crypto.randomUUID(),
+            nombre,
+            cantidad: p.cantidad || '',
+            seccion: p.seccion || getAisleCategory(nombre),
+            comprado: false
+        });
+    });
+    if (!nuevos.length) return 0;
+    state.shopping.push(...nuevos);
+    if (!saveAppState(state)) return -1;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(nuevos, 'upsert');
+    if (error) {
+        const ids = new Set(nuevos.map(n => n.id));
+        const actual = getAppState();
+        actual.shopping = actual.shopping.filter(s => !ids.has(s.id));
+        saveAppState(actual);
+        mostrarErrorGuardado(nuevos.length === 1
+            ? `No se pudo añadir "${nuevos[0].nombre}" a la compra.`
+            : 'No se pudieron añadir los productos a la compra.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return -1;
+    }
+    return nuevos.length;
+}
+
+async function marcarProductoComprado(id, comprado) {
+    const state = getAppState();
+    const item = state.shopping.find(s => s.id === id);
+    if (!item) return false;
+    const anterior = !!item.comprado;
+    item.comprado = !!comprado;
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(item, 'update', { comprado: !!comprado });
+    if (error) {
+        const actual = getAppState();
+        const it = actual.shopping.find(s => s.id === id);
+        if (it) it.comprado = anterior;
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo actualizar "${item.nombre}".`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+async function eliminarProductosDeCompra(ids) {
+    const idSet = new Set(ids);
+    const state = getAppState();
+    const quitados = state.shopping
+        .map((it, idx) => ({ it, idx }))
+        .filter(({ it }) => idSet.has(it.id));
+    if (!quitados.length) return true;
+    state.shopping = state.shopping.filter(it => !idSet.has(it.id));
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistShoppingItemToSupabase(quitados.map(q => q.it), 'delete');
+    if (error) {
+        const actual = getAppState();
+        quitados.forEach(({ it, idx }) => {
+            if (!actual.shopping.some(s => s.id === it.id)) {
+                actual.shopping.splice(Math.min(idx, actual.shopping.length), 0, it);
+            }
+        });
+        saveAppState(actual);
+        mostrarErrorGuardado(quitados.length === 1
+            ? `No se pudo eliminar "${quitados[0].it.nombre}".`
+            : 'No se pudieron eliminar los productos.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Pone un plato en su hueco (día + tipo) y sólo sube ese plato.
+async function guardarPlatoEnMenu(plato) {
+    const state = getAppState();
+    const tipo = plato.tipo === 'Cena' ? 'Cena' : 'Comida';
+    const idx = state.menu.findIndex(m => m.dia === plato.dia && m.tipo === tipo);
+    const anterior = idx >= 0 ? state.menu[idx] : null;
+    const nuevo = {
+        id: anterior ? anterior.id : crypto.randomUUID(),
+        dia: plato.dia,
+        tipo,
+        nombre: plato.nombre,
+        tiempo: plato.tiempo || '25 min',
+        ingredientes: Array.isArray(plato.ingredientes) ? plato.ingredientes : []
+    };
+    if (idx >= 0) state.menu[idx] = nuevo;
+    else state.menu.push(nuevo);
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistMenuToSupabase([nuevo]);
+    if (error) {
+        const actual = getAppState();
+        const i = actual.menu.findIndex(m => m.dia === nuevo.dia && m.tipo === nuevo.tipo);
+        if (anterior) {
+            if (i >= 0) actual.menu[i] = anterior;
+            else actual.menu.push(anterior);
+        } else if (i >= 0) {
+            actual.menu.splice(i, 1);
+        }
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo guardar "${nuevo.nombre}" en el menú.`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+async function eliminarPlatoDelMenu(id) {
+    const state = getAppState();
+    const idx = state.menu.findIndex(m => m.id === id);
+    if (idx < 0) return true;
+    const plato = state.menu[idx];
+    state.menu.splice(idx, 1);
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+    if (!currentProfile?.familia_id) return true;
+
+    let error = null;
+    try {
+        ({ error } = await supabase.from('familias_menus')
+            .delete()
+            .eq('familia_id', currentProfile.familia_id)
+            .eq('dia', plato.dia)
+            .eq('tipo', plato.tipo));
+    } catch (err) {
+        error = err;
+    }
+    if (error) {
+        const actual = getAppState();
+        if (!actual.menu.some(m => m.dia === plato.dia && m.tipo === plato.tipo)) {
+            actual.menu.splice(Math.min(idx, actual.menu.length), 0, plato);
+        }
+        saveAppState(actual);
+        mostrarErrorGuardado(`No se pudo eliminar "${plato.nombre}" del menú.`, error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Sustituye el menú entero (generado con IA o del chef) y sube los 12 platos de una vez.
+async function guardarMenuCompleto(platos) {
+    const state = getAppState();
+    const previo = state.menu;
+    state.menu = platos.map(p => ({
+        id: crypto.randomUUID(),
+        dia: p.dia,
+        tipo: p.tipo === 'Cena' ? 'Cena' : 'Comida',
+        nombre: p.nombre,
+        tiempo: p.tiempo || '25 min',
+        ingredientes: Array.isArray(p.ingredientes) ? p.ingredientes : []
+    }));
+    if (!saveAppState(state)) return false;
+    refrescarVistasDeDatos({ forzar: true });
+
+    const error = await persistMenuToSupabase(state.menu);
+    if (error) {
+        const actual = getAppState();
+        actual.menu = previo;
+        saveAppState(actual);
+        mostrarErrorGuardado('No se pudo guardar el menú semanal.', error);
+        refrescarVistasDeDatos({ forzar: true });
+        return false;
+    }
+    return true;
+}
+
+// Sube a Supabase una copia restaurada: primero escribe lo nuevo y después borra lo que sobra.
+async function restaurarCopiaEnSupabase(restoredState) {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) return null;
+    try {
+        const [shopRes, menuRes] = await Promise.all([
+            supabase.from('familias_compras').select('id').eq('familia_id', familiaId),
+            supabase.from('familias_menus').select('id, dia, tipo').eq('familia_id', familiaId)
+        ]);
+        if (shopRes.error) return shopRes.error;
+        if (menuRes.error) return menuRes.error;
+
+        const nuevosIds = new Set(restoredState.shopping.map(it => it.id));
+        if (restoredState.shopping.length) {
+            const error = await persistShoppingItemToSupabase(restoredState.shopping, 'upsert');
+            if (error) return error;
+        }
+        const sobrantes = (shopRes.data || []).filter(f => !nuevosIds.has(f.id)).map(f => ({ id: f.id }));
+        if (sobrantes.length) {
+            const error = await persistShoppingItemToSupabase(sobrantes, 'delete');
+            if (error) return error;
+        }
+
+        if (restoredState.menu.length) {
+            const error = await persistMenuToSupabase(restoredState.menu);
+            if (error) return error;
+        }
+        const huecos = new Set(restoredState.menu.map(m => `${m.dia}|${m.tipo}`));
+        const platosSobrantes = (menuRes.data || []).filter(f => !huecos.has(`${f.dia}|${f.tipo}`)).map(f => f.id);
+        if (platosSobrantes.length) {
+            const { error } = await supabase.from('familias_menus').delete().in('id', platosSobrantes);
+            if (error) return error;
+        }
+        return null;
+    } catch (err) {
+        return err;
+    }
+}
+
+// --- Sincronización en tiempo real de compra y menú ---
+
+let canalTiempoReal = null;
+let canalTiempoRealFamiliaId = null;
+let refrescoVistaTimer = null;
+let ultimaResincronizacion = 0;
+
+function iniciarSincronizacionTiempoReal(familiaId) {
+    if (!familiaId || typeof supabase.channel !== 'function') return;
+    if (canalTiempoReal && canalTiempoRealFamiliaId === familiaId && ['joined', 'joining'].includes(canalTiempoReal.state)) return;
+    detenerSincronizacionTiempoReal();
+
+    let suscritoAntes = false;
+    const filtro = `familia_id=eq.${familiaId}`;
+    const canal = supabase.channel(`familia-datos-${familiaId}`);
+    ['familias_compras', 'familias_menus'].forEach((tabla) => {
+        const alRecibir = (payload) => aplicarCambioRemoto(tabla, payload, familiaId);
+        canal
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: tabla, filter: filtro }, alRecibir)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: tabla, filter: filtro }, alRecibir)
+            // Los DELETE no admiten filtro en Realtime: sólo traen el id y se casan por id.
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: tabla }, alRecibir);
+    });
+    canal.subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        // Tras una reconexión puede haberse perdido algún evento: resincronizamos.
+        if (suscritoAntes) resincronizarDatosFamilia();
+        suscritoAntes = true;
+    });
+    canalTiempoReal = canal;
+    canalTiempoRealFamiliaId = familiaId;
+}
+
+function detenerSincronizacionTiempoReal() {
+    const canal = canalTiempoReal;
+    canalTiempoReal = null;
+    canalTiempoRealFamiliaId = null;
+    clearTimeout(refrescoVistaTimer);
+    if (canal) {
+        try {
+            supabase.removeChannel(canal);
+        } catch (err) {
+            console.warn('No se pudo cerrar el canal en tiempo real:', err);
+        }
+    }
+}
+
+function aplicarCambioRemoto(tabla, payload, familiaId) {
+    if (currentProfile?.familia_id !== familiaId) {
+        detenerSincronizacionTiempoReal();
+        return;
+    }
+    const evento = payload?.eventType;
+    const fila = payload?.new;
+    const state = getAppState();
+
+    if (tabla === 'familias_compras') {
+        if (evento === 'DELETE') {
+            const id = payload?.old?.id;
+            if (!id || !state.shopping.some(s => s.id === id)) return;
+            state.shopping = state.shopping.filter(s => s.id !== id);
+        } else {
+            if (!fila?.id || fila.familia_id !== familiaId || DEMO_SHOPPING_IDS.has(fila.id)) return;
+            const item = compraDesdeFila(fila);
+            const idx = state.shopping.findIndex(s => s.id === item.id);
+            if (idx >= 0) state.shopping[idx] = item;
+            else state.shopping.push(item);
+        }
+    } else if (tabla === 'familias_menus') {
+        if (evento === 'DELETE') {
+            const id = payload?.old?.id;
+            if (!id || !state.menu.some(m => m.id === id)) return;
+            state.menu = state.menu.filter(m => m.id !== id);
+        } else {
+            if (!fila?.id || fila.familia_id !== familiaId || esPlatoDemo(fila)) return;
+            const plato = platoDesdeFila(fila);
+            state.menu = state.menu.filter(m => m.id !== plato.id && !(m.dia === plato.dia && m.tipo === plato.tipo));
+            state.menu.push(plato);
+        }
+    } else {
+        return;
+    }
+
+    saveToStorage(STORAGE_KEYS.app, state);
+    clearTimeout(refrescoVistaTimer);
+    refrescoVistaTimer = setTimeout(() => refrescarVistasDeDatos(), 150);
+}
+
+function hayEdicionEnCurso() {
+    if (!mainContent) return false;
+    if (mainContent.querySelector('form.panel:not(.hidden)')) return true;
+    const activo = document.activeElement;
+    return !!(activo && mainContent.contains(activo) && /^(INPUT|TEXTAREA|SELECT)$/.test(activo.tagName) && activo.type !== 'checkbox');
+}
+
+// Vuelve a pintar las vistas que muestran compra o menú. Si el usuario está escribiendo, espera.
+function refrescarVistasDeDatos({ forzar = false } = {}) {
+    const supermercado = document.getElementById('supermarket-modal');
+    if (supermercado && typeof supermercado.refrescar === 'function') supermercado.refrescar();
+    if (!currentProfile?.familia_id || appView?.classList.contains('hidden')) return;
+    if (!['compra', 'menus', 'dashboard'].includes(currentView)) return;
+    if (!forzar && hayEdicionEnCurso()) {
+        clearTimeout(refrescoVistaTimer);
+        refrescoVistaTimer = setTimeout(() => refrescarVistasDeDatos(), 1500);
+        return;
+    }
+    if (currentView === 'compra') renderCompraView();
+    else if (currentView === 'menus') renderMenuView();
+    else renderDashboard(viewRenderId).catch(err => console.warn('No se pudo refrescar el resumen:', err));
+}
+
+async function resincronizarDatosFamilia() {
+    if (!currentProfile?.familia_id) return;
+    ultimaResincronizacion = Date.now();
+    if (await syncFamilyDataFromSupabase()) refrescarVistasDeDatos();
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !currentProfile?.familia_id) return;
+    if (Date.now() - ultimaResincronizacion < 5000) return;
+    resincronizarDatosFamilia();
+});
+
+// Dieta real de la familia (familias.dieta_base), con caché por familia.
+const DIETAS_IA = ['Mediterránea', 'Vegetariana', 'Saludable y ligera', 'Familiar con niños'];
+let dietaFamiliaCache = { familiaId: null, dieta: null };
+
+async function obtenerDietaFamilia() {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) return 'Mediterránea';
+    if (dietaFamiliaCache.familiaId === familiaId && dietaFamiliaCache.dieta) return dietaFamiliaCache.dieta;
+    try {
+        const { data, error } = await supabase.from('familias').select('dieta_base').eq('id', familiaId).maybeSingle();
+        if (!error && data?.dieta_base) dietaFamiliaCache = { familiaId, dieta: data.dieta_base };
+    } catch (err) {
+        console.warn('No se pudo leer la dieta de la familia:', err);
+    }
+    return dietaFamiliaCache.familiaId === familiaId && dietaFamiliaCache.dieta ? dietaFamiliaCache.dieta : 'Mediterránea';
+}
+
+// La IA sólo acepta unas dietas concretas; el resto ("Libre", etc.) se trata como mediterránea.
+function dietaParaIA(dieta) {
+    return DIETAS_IA.includes(dieta) ? dieta : 'Mediterránea';
+}
+
+function listaDeTextos(valor) {
+    if (Array.isArray(valor)) return valor.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim());
+    if (typeof valor === 'string') return valor.split(',').map(v => v.trim()).filter(Boolean);
+    return [];
+}
+
+
+// Puntos Tribu: la fuente de verdad es la BD (RPC puntos_familia, 10 pts por tarea completada).
+// localStorage sólo guarda una caché de lectura para mostrar algo si no hay conexión.
+function getKarmaPoints() {
+    const cached = readFromStorage(STORAGE_KEYS.karma, {});
+    return cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : {};
+}
+
+async function cargarPuntosFamilia() {
+    try {
+        const { data, error } = await supabase.rpc('puntos_familia');
+        if (error) throw error;
+        const karma = {};
+        (Array.isArray(data) ? data : []).forEach((row) => {
+            if (row?.usuario_id) karma[row.usuario_id] = Number(row.puntos) || 0;
+        });
+        saveToStorage(STORAGE_KEYS.karma, karma);
+        return karma;
+    } catch (error) {
+        console.warn('No se pudieron cargar los puntos de la familia:', error);
+        return getKarmaPoints();
+    }
 }
 
 function triggerConfetti() {
@@ -1241,22 +1670,79 @@ function showToast(message) {
     }, 2800);
 }
 
+// --- Modales accesibles: foco atrapado, Escape y vuelta al elemento que lo abrió ---
+const SELECTOR_ENFOCABLES = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+let modalFocoPrevio = null;
+
+function getEnfocables(contenedor) {
+    return [...contenedor.querySelectorAll(SELECTOR_ENFOCABLES)]
+        .filter(el => el.getClientRects().length > 0 && !el.closest('[inert]'));
+}
+
 function openModal(contentHtml) {
     if (!modalContainer || !modalCardContent) return;
+    const yaAbierto = !modalContainer.classList.contains('hidden');
+    if (!yaAbierto) modalFocoPrevio = document.activeElement;
     modalCardContent.innerHTML = contentHtml;
     modalContainer.classList.remove('hidden');
-    const closeBtn = modalCardContent.querySelector('.modal-close');
-    if (closeBtn) closeBtn.onclick = closeModal;
+    modalContainer.setAttribute('aria-modal', 'true');
+    const titulo = modalCardContent.querySelector('h3');
+    if (titulo) {
+        if (!titulo.id) titulo.id = 'modal-title';
+        modalContainer.setAttribute('aria-labelledby', titulo.id);
+    } else {
+        modalContainer.removeAttribute('aria-labelledby');
+    }
+    appView?.setAttribute('inert', '');
+    modalCardContent.querySelectorAll('.modal-close, [data-modal-close]').forEach(btn => {
+        btn.addEventListener('click', closeModal);
+    });
+    // Enfoca el primer control (no un campo de texto: en el móvil abriría el teclado)
+    const primero = getEnfocables(modalCardContent)[0];
+    if (primero) primero.focus({ preventScroll: true });
 }
 
 function closeModal() {
     if (!modalContainer) return;
+    const estabaAbierto = !modalContainer.classList.contains('hidden');
     modalContainer.classList.add('hidden');
     if (modalCardContent) modalCardContent.innerHTML = '';
+    if (!document.getElementById('supermarket-modal')) appView?.removeAttribute('inert');
+    if (!estabaAbierto) return;
+    let previo = modalFocoPrevio;
+    modalFocoPrevio = null;
+    // Si se abrió desde el menú del FAB (ya oculto), el foco vuelve al botón principal
+    if (previo && fabMenu?.contains(previo)) previo = fabMainBtn;
+    if (previo && previo.isConnected && typeof previo.focus === 'function') previo.focus();
 }
 
 modalContainer?.addEventListener('click', (e) => {
     if (e.target === modalContainer) closeModal();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!modalContainer || modalContainer.classList.contains('hidden')) return;
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        closeModal();
+        return;
+    }
+    if (e.key !== 'Tab') return;
+    const enfocables = getEnfocables(modalCardContent);
+    if (!enfocables.length) {
+        e.preventDefault();
+        return;
+    }
+    const primero = enfocables[0];
+    const ultimo = enfocables[enfocables.length - 1];
+    const dentro = modalCardContent.contains(document.activeElement);
+    if (e.shiftKey && (!dentro || document.activeElement === primero)) {
+        e.preventDefault();
+        ultimo.focus();
+    } else if (!e.shiftKey && (!dentro || document.activeElement === ultimo)) {
+        e.preventDefault();
+        primero.focus();
+    }
 });
 
 function getLocalDateInputValue(date = new Date()) {
@@ -1264,16 +1750,6 @@ function getLocalDateInputValue(date = new Date()) {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-}
-
-function computeNextRecurringDate(baseDateStr, recurrence) {
-    const d = new Date(baseDateStr ? `${baseDateStr}T00:00:00` : new Date());
-    if (recurrence === 'Diaria') d.setDate(d.getDate() + 1);
-    else if (recurrence === 'Semanal') d.setDate(d.getDate() + 7);
-    else if (recurrence === 'Quincenal') d.setDate(d.getDate() + 14);
-    else if (recurrence === 'Mensual') d.setMonth(d.getMonth() + 1);
-    else return null;
-    return getLocalDateInputValue(d);
 }
 
 function escapeHtml(value) {
@@ -1312,13 +1788,13 @@ function getPendingInvite() {
     try {
         let params = new URLSearchParams(window.location.search);
         let token = params.get('invite');
-        let tribu = params.get('tribu');
+        // El parámetro `tribu` de la URL se ignora: es falsificable. El nombre real de la familia
+        // se obtiene del servidor con ver_invitacion_familia antes de aceptar.
 
         if (!token && window.location.hash && window.location.hash.includes('?')) {
             const hashSearch = window.location.hash.substring(window.location.hash.indexOf('?'));
             params = new URLSearchParams(hashSearch);
             token = params.get('invite');
-            tribu = params.get('tribu');
         }
 
         if (params.has('join')) {
@@ -1330,10 +1806,7 @@ function getPendingInvite() {
             return null;
         }
         if (token && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-            const invite = {
-                token,
-                tribuName: tribu || 'Familia'
-            };
+            const invite = { token };
             sessionStorage.setItem('tribuapp_pending_invite', JSON.stringify(invite));
             return invite;
         }
@@ -1350,14 +1823,14 @@ function getPendingInvite() {
 function setupInviteAuthUI(pendingInvite) {
     authMode = 'invite_join';
     if (inviteWelcomeBanner && inviteWelcomeText) {
-        inviteWelcomeText.innerHTML = `<strong>👋 ¡Bienvenido/a a la tribu "${escapeHtml(pendingInvite.tribuName)}"!</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95;">Crea tu acceso para unirte a la familia en 1 clic:</span>`;
+        inviteWelcomeText.innerHTML = `<strong>👋 Te han invitado a una tribu de Tribuapp</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95;">Crea tu acceso o inicia sesión. Antes de unirte verás el nombre de la familia y quién te invita.</span>`;
         inviteWelcomeBanner.classList.remove('hidden');
     }
     if (authNameGroup) {
         authNameGroup.classList.remove('hidden');
         if (authMemberNameInput) authMemberNameInput.required = true;
     }
-    btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+    btnSubmit.innerText = '✨ Crear acceso y ver la invitación';
     btnSubmit.style.background = 'linear-gradient(135deg, #10B981, #059669)';
     btnAuthMode.innerText = '¿Ya tienes cuenta en Tribuapp? Inicia sesión aquí';
     btnDemoLogin?.classList.add('hidden');
@@ -1396,17 +1869,11 @@ function detectPasswordRecoveryState() {
         return false;
     }
 
-    // 2. Comprobar si es un flujo de recuperación de contraseña (type=recovery o contiene tokens)
-    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
-        isPasswordRecovery = true;
-        return true;
-    }
-    if (hash.includes('access_token=') && (hash.includes('refresh_token=') || hash.includes('token_type='))) {
-        isPasswordRecovery = true;
-        return true;
-    }
-
-    return false;
+    // 2. ¿Es un enlace de recuperación de contraseña? Sólo se usa para no mostrar el dashboard
+    // mientras supabase-js (detectSessionInUrl) valida los tokens; la sesión NUNCA se crea a mano
+    // con los tokens de la URL. El formulario se abre con el evento PASSWORD_RECOVERY o si el SDK
+    // ha validado una sesión para este enlace.
+    return hash.includes('type=recovery') || search.includes('type=recovery');
 }
 
 function showPasswordUpdateForm(user = null) {
@@ -1468,65 +1935,51 @@ function setCurrentUser(user) {
 }
 
 function getFriendlyUserName() {
+    const nombreGuardado = currentUser?.user_metadata?.nombre;
+    if (typeof nombreGuardado === 'string' && nombreGuardado.trim()) return nombreGuardado.trim().slice(0, 50);
     return currentUser?.email ? currentUser.email.split('@')[0] : 'Tú';
+}
+
+// El nombre del registro se guarda en la cuenta para no perderlo si se recarga o se rechaza una invitación
+function datosRegistro(nombre) {
+    const limpio = String(nombre || '').trim().slice(0, 50);
+    return limpio ? { data: { nombre: limpio } } : {};
 }
 
 async function checkSession() {
     const isRecoveryUrl = detectPasswordRecoveryState();
 
+    // Sin red no esperamos a que supabase-js intente refrescar el token: usamos lo guardado
+    if (!navigator.onLine && !isRecoveryUrl && arrancarSinConexion()) return;
+
     try {
-        let { data: { session }, error } = await supabase.auth.getSession();
-
-        // Si tenemos tokens en la URL pero getSession aún no los tiene (por ejemplo, al pegar URL o volver de redirect)
-        if (!session && isRecoveryUrl) {
-            const rawHash = (window.__INITIAL_HASH__ || window.location.hash || '').replace(/^#/, '');
-            const rawSearch = (window.__INITIAL_SEARCH__ || window.location.search || '').replace(/^\?/, '');
-            const hashParams = new URLSearchParams(rawHash);
-            const searchParams = new URLSearchParams(rawSearch);
-            const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
-            const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
-            const code = searchParams.get('code') || hashParams.get('code');
-
-            if (accessToken) {
-                try {
-                    const setRes = await supabase.auth.setSession({
-                        access_token: accessToken,
-                        refresh_token: refreshToken || ''
-                    });
-                    if (setRes.data?.session) {
-                        session = setRes.data.session;
-                    }
-                } catch (e) {
-                    console.warn('Error al activar sesión desde URL hash:', e);
-                }
-            } else if (code) {
-                try {
-                    const codeRes = await supabase.auth.exchangeCodeForSession(code);
-                    if (codeRes.data?.session) {
-                        session = codeRes.data.session;
-                    }
-                } catch (e) {
-                    console.warn('Error al canjear código PKCE desde URL:', e);
-                }
-            }
-        }
+        // getSession espera a que supabase-js termine de procesar la URL (detectSessionInUrl):
+        // si el enlace era de recuperación válido, emite PASSWORD_RECOVERY y guarda la sesión.
+        const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
-            showAuthError(`No se pudo comprobar la sesión: ${error.message}`);
+            if (esErrorDeRed(error) && arrancarSinConexion()) return;
+            showAuthError(`No se pudo comprobar la sesión: ${traducirErrorAuth(error)}`);
             return;
         }
 
-        // Si la URL es de recuperación o venimos de un evento de contraseña, no saltar al dashboard
         if (isRecoveryUrl || isPasswordRecovery) {
-            setCurrentUser(session?.user || null);
-            showPasswordUpdateForm(session?.user || null);
+            if (session?.user) {
+                showPasswordUpdateForm(session.user);
+            } else {
+                isPasswordRecovery = false;
+                setCurrentUser(null);
+                await mostrarApp();
+                showAuthError('⚠️ El enlace de recuperación ha caducado o ya ha sido utilizado. Solicita un nuevo enlace.');
+            }
             return;
         }
 
         setCurrentUser(session?.user || null);
         await mostrarApp();
     } catch (error) {
-        showAuthError(`No se pudo conectar con Supabase: ${error.message}`);
+        if (esErrorDeRed(error) && arrancarSinConexion()) return;
+        showAuthError(`No se pudo conectar con Supabase: ${traducirErrorAuth(error)}`);
     }
 }
 
@@ -1561,7 +2014,7 @@ btnAuthMode.addEventListener('click', () => {
             authMode = 'login';
             authNameGroup?.classList.add('hidden');
             if (authMemberNameInput) authMemberNameInput.required = false;
-            btnSubmit.innerText = `Iniciar sesión y entrar a ${pendingInvite.tribuName}`;
+            btnSubmit.innerText = 'Iniciar sesión y ver la invitación';
             btnSubmit.style.background = '';
             btnAuthMode.innerText = '¿Es tu primera vez? Crea tu acceso para unirte';
             btnResetPassword?.classList.remove('hidden');
@@ -1674,8 +2127,8 @@ passwordRecoveryRequestForm?.addEventListener('submit', async (e) => {
         let msg = error.message;
         if (error.status === 429 || error.code === 429 || msg?.includes('rate limit') || msg?.includes('security purposes')) {
             msg = 'Por motivos de seguridad, debes esperar aproximadamente un minuto antes de solicitar otro correo de recuperación.';
-        } else if (msg?.includes('fetch') || msg?.includes('network')) {
-            msg = 'Error de conexión. Comprueba tu conexión a internet.';
+        } else {
+            msg = traducirErrorAuth(error);
         }
         if (recoveryRequestError) {
             recoveryRequestError.innerText = `No se pudo enviar el correo: ${msg}`;
@@ -1721,16 +2174,13 @@ async function processRecoveryInput(rawInput) {
     const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
 
     if (accessToken) {
-        const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken || ''
-        });
-        if (error) throw error;
-
-        isPasswordRecovery = true;
-        setCurrentUser(data.user || null);
-        showPasswordUpdateForm(data.user || null);
-        showToast('🔑 ¡Enlace validado con éxito! Elige tu nueva contraseña.');
+        // No se llama a setSession con tokens copiados: se recarga la app con el enlace para que
+        // supabase-js lo valide (detectSessionInUrl) y emita PASSWORD_RECOVERY si es de recuperación.
+        if (!refreshToken || !/type=recovery/.test(hashPart + '&' + searchPart)) {
+            throw new Error('El enlace pegado no es un enlace de recuperación de contraseña.');
+        }
+        history.replaceState(null, '', `${window.location.pathname}#${hashPart}`);
+        window.location.reload();
         return;
     }
 
@@ -1811,11 +2261,11 @@ async function processRecoveryInput(rawInput) {
 }
 
 if (supabaseAppUrlPreview) {
-    supabaseAppUrlPreview.value = window.location.origin;
+    supabaseAppUrlPreview.value = getPublicAppUrl();
 }
 
 btnCopyAppUrl?.addEventListener('click', async () => {
-    const url = window.location.origin;
+    const url = getPublicAppUrl();
     try {
         await navigator.clipboard.writeText(url);
         btnCopyAppUrl.innerText = '¡Copiado!';
@@ -1847,7 +2297,7 @@ btnActivatePastedRecovery?.addEventListener('click', async () => {
     } catch (err) {
         console.warn('Error al activar enlace de recuperación:', err);
         if (recoveryPastedError) {
-            recoveryPastedError.innerText = `No se pudo activar: ${err.message || 'Verifica que hayas copiado la dirección completa.'}`;
+            recoveryPastedError.innerText = `No se pudo activar: ${err.message ? traducirErrorAuth(err) : 'Verifica que hayas copiado la dirección completa.'}`;
             recoveryPastedError.classList.remove('hidden');
         }
     } finally {
@@ -1920,6 +2370,8 @@ passwordUpdateForm.addEventListener('submit', async (event) => {
             msg = 'La nueva contraseña no puede ser idéntica a la anterior.';
         } else if (msg.includes('expired') || msg.includes('reauthenticate')) {
             msg = 'La sesión de recuperación ha caducado. Vuelve a solicitar un enlace de recuperación.';
+        } else {
+            msg = traducirErrorAuth(error);
         }
         passwordUpdateError.innerText = `No se pudo actualizar la contraseña: ${msg}`;
         passwordUpdateError.classList.remove('hidden');
@@ -1928,6 +2380,75 @@ passwordUpdateForm.addEventListener('submit', async (event) => {
         submitButton.innerText = 'Guardar nueva contraseña';
     }
 });
+
+// Traduce al español los errores habituales de Supabase Auth.
+function traducirErrorAuth(error) {
+    const raw = String(error?.message || error?.msg || error || '');
+    const code = String(error?.code || error?.error_code || '');
+    const msg = raw.toLowerCase();
+    const status = Number(error?.status) || 0;
+
+    if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
+        return 'Correo o contraseña incorrectos.';
+    }
+    if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
+        return 'Tienes que confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.';
+    }
+    if (code === 'user_already_exists' || code === 'email_exists' || msg.includes('already registered') || msg.includes('user already')) {
+        return 'Ya existe una cuenta con este correo. Inicia sesión.';
+    }
+    if (code === 'weak_password' || msg.includes('password should be') || msg.includes('password is too weak')) {
+        return 'La contraseña es demasiado débil: usa al menos 6 caracteres.';
+    }
+    if (code === 'same_password' || msg.includes('same_password') || msg.includes('should be different')) {
+        return 'La nueva contraseña no puede ser idéntica a la anterior.';
+    }
+    if (code === 'email_address_invalid' || msg.includes('unable to validate email') || msg.includes('invalid format') || msg.includes('email address') && msg.includes('invalid')) {
+        return 'El correo electrónico no es válido.';
+    }
+    if (code === 'signup_disabled' || msg.includes('signups not allowed') || msg.includes('signup is disabled')) {
+        return 'El registro de nuevas cuentas está desactivado.';
+    }
+    if (status === 429 || code.includes('rate_limit') || msg.includes('rate limit') || msg.includes('security purposes') || msg.includes('too many')) {
+        return 'Demasiados intentos. Espera un minuto y vuelve a intentarlo.';
+    }
+    if (code === 'otp_expired' || msg.includes('expired') || msg.includes('token has expired') || msg.includes('invalid or has expired')) {
+        return 'El enlace o la sesión han caducado. Solicita uno nuevo o vuelve a iniciar sesión.';
+    }
+    if (code === 'session_not_found' || msg.includes('auth session missing') || msg.includes('jwt')) {
+        return 'Tu sesión ha caducado. Vuelve a iniciar sesión.';
+    }
+    if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('load failed')) {
+        return 'Error de conexión. Comprueba tu conexión a internet.';
+    }
+    return raw || 'No se pudo completar la operación.';
+}
+
+// Traduce los motivos/errores de invitación (ver_invitacion_familia, aceptar_invitacion_familia).
+function traducirErrorInvitacion(errorOMotivo) {
+    const raw = typeof errorOMotivo === 'string' ? errorOMotivo : String(errorOMotivo?.message || '');
+    const msg = raw.toLowerCase();
+    if (msg.includes('revocad') || msg.includes('revoked') || msg.includes('invalidad')) {
+        return 'El administrador ha invalidado este enlace de invitación. Pide uno nuevo.';
+    }
+    if (msg.includes('agotad') || msg.includes('max_usos') || msg.includes('máximo de usos') || msg.includes('exhausted')) {
+        return 'Este enlace de invitación ya se ha usado el máximo de veces. Pide uno nuevo.';
+    }
+    if (msg.includes('expulsad') || msg.includes('expelled') || msg.includes('banned')) {
+        return 'El administrador te quitó de esta familia, así que no puedes volver a unirte con este enlace.';
+    }
+    if (msg.includes('caducad') || msg.includes('expired')) {
+        return 'La invitación ha caducado. Pide un enlace nuevo al administrador.';
+    }
+    if (msg.includes('no_existe') || msg === 'not_found' || msg.includes('no existe')) {
+        return 'La invitación no existe o ya no está disponible.';
+    }
+    if (msg.includes('otra familia') || msg.includes('otra_familia') || msg.includes('ya pertenece')) {
+        return 'Tu cuenta ya pertenece a otra familia. Pide a su administrador que te quite antes de aceptar otra invitación.';
+    }
+    if (typeof errorOMotivo === 'object' && errorOMotivo) return traducirErrorAuth(errorOMotivo);
+    return raw || 'La invitación no es válida.';
+}
 
 authForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1943,17 +2464,20 @@ authForm.addEventListener('submit', async (event) => {
     if (!email || !password) {
         showAuthError('Debes rellenar correo y contraseña.');
         btnSubmit.disabled = false;
-        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : (authMode === 'invite_join' ? `✨ Unirme a ${pendingInvite?.tribuName || 'la Tribu'}` : 'Iniciar sesión');
+        btnSubmit.innerText = authMode === 'signup' ? 'Crear cuenta' : (authMode === 'invite_join' ? '✨ Crear acceso y ver la invitación' : 'Iniciar sesión');
         return;
     }
 
+    // El nombre escrito en el formulario se usa para rellenar la confirmación de la invitación.
+    if (memberName) nombreParaInvitacion = memberName.slice(0, 50);
+
     try {
         if (pendingInvite && authMode === 'invite_join') {
-            btnSubmit.innerText = `Uniéndote a ${pendingInvite.tribuName}...`;
+            btnSubmit.innerText = 'Creando tu acceso...';
             let authUser = null;
 
             // Intento 1: Registro directo
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password, options: datosRegistro(memberName) });
             if (!signUpError && signUpData.user) {
                 if (!signUpData.session) {
                     try {
@@ -1967,7 +2491,7 @@ authForm.addEventListener('submit', async (event) => {
                 }
                 if (!authUser) {
                     updateAuthMode('login');
-                    showAuthMessage('Cuenta creada. Confirma tu correo o inicia sesión para unirte a la tribu.');
+                    showAuthMessage('Cuenta creada. Confirma tu correo o inicia sesión para ver la invitación.');
                     return;
                 }
             } else if (signUpError) {
@@ -1988,36 +2512,25 @@ authForm.addEventListener('submit', async (event) => {
                 throw new Error('No se pudo autenticar. Por favor, revisa tus datos.');
             }
 
+            // No se acepta la invitación automáticamente: mostrarApp enseña la confirmación con el nombre real.
             setCurrentUser(authUser);
-
-            // Unión automática instantánea a la familia
-            const joinedFamily = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-            showToast(`🎉 ¡Bienvenido/a a ${joinedFamily?.nombre || pendingInvite.tribuName}!`);
             await mostrarApp();
             return;
         }
 
         if (authMode === 'signup') {
             btnSubmit.innerText = 'Creando cuenta...';
-            const { data, error } = await supabase.auth.signUp({ email, password });
+            const { data, error } = await supabase.auth.signUp({ email, password, options: datosRegistro(memberName) });
             if (error) throw error;
 
             if (data.session && data.user) {
                 setCurrentUser(data.user);
-                if (pendingInvite) {
-                    const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                    showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-                }
                 await mostrarApp();
             } else if (data.user) {
                 try {
                     const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
                     if (!signErr && signData?.session && signData?.user) {
                         setCurrentUser(signData.user);
-                        if (pendingInvite) {
-                            const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                            showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-                        }
                         await mostrarApp();
                         return;
                     }
@@ -2028,25 +2541,20 @@ authForm.addEventListener('submit', async (event) => {
                 showAuthMessage('Cuenta creada con éxito. Ya puedes iniciar sesión.');
             }
         } else {
-            // Modo login estándar o con invitación
+            // Modo login estándar o con invitación (la invitación se confirma en mostrarApp)
             btnSubmit.innerText = 'Iniciando sesión...';
             const { data, error } = await supabase.auth.signInWithPassword({ email, password });
             if (error) throw error;
             if (!data.user) throw new Error('Supabase no devolvió el usuario autenticado.');
             setCurrentUser(data.user);
-
-            if (pendingInvite) {
-                const joined = await handleJoinTribu(pendingInvite.token, memberName || getFriendlyUserName());
-                showToast(`🎉 ¡Te has unido a ${joined.nombre}!`);
-            }
             await mostrarApp();
         }
     } catch (error) {
-        showAuthError(error.message || 'No se pudo completar la operación.');
+        showAuthError(traducirErrorAuth(error));
     } finally {
         btnSubmit.disabled = false;
         if (pendingInvite && authMode === 'invite_join') {
-            btnSubmit.innerText = `✨ Unirme a ${pendingInvite.tribuName}`;
+            btnSubmit.innerText = '✨ Crear acceso y ver la invitación';
         } else if (authMode === 'signup') {
             btnSubmit.innerText = 'Crear cuenta';
         } else {
@@ -2055,23 +2563,236 @@ authForm.addEventListener('submit', async (event) => {
     }
 });
 
+// Borra del navegador los datos de la sesión anterior (estado, tareas, puntos, caché de Supabase).
+// Se conservan sólo las preferencias del dispositivo (tema y notificaciones).
+function limpiarDatosLocalesUsuario() {
+    const conservar = new Set([THEME_STORAGE_KEY, PUSH_PREFS_KEY]);
+    try {
+        const claves = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || conservar.has(key)) continue;
+            if (key.startsWith('tribuapp-') || key.startsWith('tribuapp_') || key.startsWith('sb-')) claves.push(key);
+        }
+        claves.forEach((key) => localStorage.removeItem(key));
+    } catch (error) {
+        console.warn('No se pudo limpiar el almacenamiento local:', error);
+    }
+    invitacionVerificada = null;
+    nombreParaInvitacion = '';
+}
+
+// Deja la app en la pantalla de acceso sin rastro de la sesión anterior.
+function cerrarSesionLocal() {
+    if (typeof detenerSincronizacionTiempoReal === 'function') {
+        try { detenerSincronizacionTiempoReal(); } catch (error) { console.warn(error); }
+    }
+    cerrarModoSupermercado();
+    closeModal();
+    limpiarDatosLocalesUsuario();
+
+    isPasswordRecovery = false;
+    setCurrentUser(null);
+    currentProfile = null;
+    authForm.reset();
+    mainContent.innerHTML = '';
+    authView.classList.remove('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.add('hidden');
+    authError.classList.add('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+    resetStandardAuthUI();
+}
+
 btnLogout.addEventListener('click', async () => {
+    if (typeof detenerSincronizacionTiempoReal === 'function') {
+        try { detenerSincronizacionTiempoReal(); } catch (error) { console.warn(error); }
+    }
     try {
         const { error } = await supabase.auth.signOut();
         if (error) console.warn(error);
     } catch (error) {
         console.warn(error);
     }
-
-    setCurrentUser(null);
-    currentProfile = null;
-    authForm.reset();
-    authView.classList.remove('hidden');
-    onboardingView.classList.add('hidden');
-    appView.classList.add('hidden');
-    authError.classList.add('hidden');
-    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+    descartarInvitacionPendiente();
+    cerrarSesionLocal();
 });
+
+// --- Invitaciones y onboarding ---
+
+let invitacionVerificada = null; // { token, familia_nombre, invitado_por } ya mostrada al usuario
+let nombreParaInvitacion = '';
+
+function descartarInvitacionPendiente() {
+    try {
+        sessionStorage.removeItem('tribuapp_pending_invite');
+    } catch {}
+    invitacionVerificada = null;
+    // Quitar ?invite= de la barra de direcciones para no volver a procesarla al recargar
+    try {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('invite') || url.searchParams.has('tribu')) {
+            url.searchParams.delete('invite');
+            url.searchParams.delete('tribu');
+            history.replaceState(null, '', url.pathname + url.search + url.hash);
+        }
+    } catch {}
+}
+
+function normalizarTokenInvitacion(inviteOrToken) {
+    let token = String(inviteOrToken || '').trim();
+    try {
+        if (token.startsWith('http://') || token.startsWith('https://')) {
+            token = new URL(token).searchParams.get('invite') || '';
+        }
+    } catch {
+        throw new Error('El enlace de invitación no es válido.');
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+        throw new Error('Usa un enlace de invitación válido; los códigos antiguos ya no se aceptan.');
+    }
+    return token.toLowerCase();
+}
+
+// Consulta en el servidor a qué familia lleva la invitación (sin aceptarla).
+async function verInvitacion(token) {
+    const { data, error } = await supabase.rpc('ver_invitacion_familia', { p_token: token });
+    if (error) throw new Error(traducirErrorInvitacion(error));
+    const info = Array.isArray(data) ? data[0] : data;
+    if (!info?.valida) {
+        throw new Error(traducirErrorInvitacion(info?.motivo || 'no_existe'));
+    }
+    return {
+        token,
+        familia_nombre: info.familia_nombre || 'Familia',
+        invitado_por: info.invitado_por || '',
+    };
+}
+
+function textoConfirmacionInvitacion(info) {
+    return info.invitado_por
+        ? `¿Unirte a la familia "${info.familia_nombre}", invitado por ${info.invitado_por}?`
+        : `¿Unirte a la familia "${info.familia_nombre}"?`;
+}
+
+// Pinta en el formulario de unirse la confirmación con el nombre real de la familia.
+function mostrarConfirmacionEnOnboarding(info) {
+    invitacionVerificada = info;
+    if (joinInviteTokenInput) joinInviteTokenInput.value = info.token;
+    if (inviteDetectedBanner && inviteDetectedText) {
+        inviteDetectedText.innerText = textoConfirmacionInvitacion(info);
+        inviteDetectedBanner.classList.remove('hidden');
+    }
+    btnJoinTribu.innerText = `Sí, unirme a ${info.familia_nombre}`;
+    document.getElementById('btn-reject-invite')?.classList.remove('hidden');
+}
+
+function resetConfirmacionOnboarding() {
+    invitacionVerificada = null;
+    inviteDetectedBanner?.classList.add('hidden');
+    btnJoinTribu.innerText = 'Unirme a la Tribu';
+    document.getElementById('btn-reject-invite')?.classList.add('hidden');
+}
+
+function mostrarOnboarding(mensajeError = '') {
+    authView.classList.add('hidden');
+    appView.classList.add('hidden');
+    onboardingView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
+
+    if (joinNombreInput && !joinNombreInput.value) joinNombreInput.value = nombreParaInvitacion || getFriendlyUserName();
+    const adminNameInput = document.getElementById('tribu-nombre-usuario');
+    if (adminNameInput && !adminNameInput.value) adminNameInput.value = nombreParaInvitacion || getFriendlyUserName();
+
+    if (mensajeError) {
+        onboardingError.innerText = mensajeError;
+        onboardingError.classList.remove('hidden');
+    } else {
+        onboardingError.classList.add('hidden');
+    }
+}
+
+function mostrarTabUnirse() {
+    tabJoinTribu?.classList.add('active');
+    tabCreateTribu?.classList.remove('active');
+    joinTribuForm?.classList.remove('hidden');
+    onboardingForm?.classList.add('hidden');
+}
+
+// Tras crear o unirse a una tribu: descarga los datos de la familia y entra en la app.
+async function entrarEnTribu() {
+    descartarInvitacionPendiente();
+    resetConfirmacionOnboarding();
+    onboardingView.classList.add('hidden');
+    authView.classList.add('hidden');
+    appView.classList.remove('hidden');
+    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+    await syncFamilyDataFromSupabase();
+    await renderizarVista('dashboard');
+}
+
+// Procesa una invitación abierta desde ?invite=TOKEN: muestra a qué familia lleva y quién invita
+// y sólo la acepta si el usuario lo confirma.
+async function procesarInvitacionPendiente(pendingInvite, profile) {
+    let info;
+    try {
+        info = await verInvitacion(normalizarTokenInvitacion(pendingInvite.token));
+    } catch (error) {
+        descartarInvitacionPendiente();
+        const mensaje = `Invitación no válida: ${error.message}`;
+        if (profile?.familia_id) {
+            await entrarEnTribu();
+            showToast(`⚠️ ${mensaje}`);
+        } else {
+            resetConfirmacionOnboarding();
+            mostrarTabUnirse();
+            mostrarOnboarding(mensaje);
+        }
+        return;
+    }
+
+    if (!profile?.familia_id) {
+        mostrarTabUnirse();
+        mostrarOnboarding();
+        mostrarConfirmacionEnOnboarding(info);
+        return;
+    }
+
+    // Ya pertenece a una familia: entrar en la app y preguntar en un modal.
+    await entrarEnTribu();
+    openModal(`
+        <div class="modal-header">
+            <h3>⛺ Invitación a una tribu</h3>
+            <button class="modal-close" aria-label="Cerrar">✕</button>
+        </div>
+        <p id="invite-confirm-text" style="margin-bottom: 8px;"></p>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">Si ya perteneces a otra familia, su administrador tendrá que quitarte antes de que puedas unirte.</p>
+        <div class="modal-footer">
+            <button type="button" id="btn-accept-invite-modal" class="btn-primary"></button>
+            <button type="button" id="btn-reject-invite-modal" class="btn-secondary">No, gracias</button>
+        </div>
+    `);
+    document.getElementById('invite-confirm-text').innerText = textoConfirmacionInvitacion(info);
+    const acceptBtn = document.getElementById('btn-accept-invite-modal');
+    acceptBtn.innerText = `Sí, unirme a ${info.familia_nombre}`;
+    document.getElementById('btn-reject-invite-modal')?.addEventListener('click', () => {
+        closeModal();
+        showToast('Invitación descartada');
+    });
+    acceptBtn.addEventListener('click', async () => {
+        acceptBtn.disabled = true;
+        acceptBtn.innerText = 'Uniéndote...';
+        try {
+            const family = await handleJoinTribu(info.token, profile.nombre || getFriendlyUserName());
+            closeModal();
+            showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
+            await entrarEnTribu();
+        } catch (error) {
+            closeModal();
+            showToast(`⚠️ No se pudo aceptar la invitación: ${error.message}`);
+        }
+    });
+}
 
 async function mostrarApp() {
     if (isPasswordRecovery) {
@@ -2101,73 +2822,38 @@ async function mostrarApp() {
         .eq('id', currentUser.id)
         .maybeSingle();
 
+    // Si mientras tanto se abrió un enlace de recuperación, no pisar el formulario de nueva contraseña
+    if (isPasswordRecovery) return;
+
     if (error) {
+        if (esErrorDeRed(error) && arrancarSinConexion(currentUser)) return;
         onboardingView.classList.add('hidden');
         appView.classList.add('hidden');
         authView.classList.remove('hidden');
-        showAuthError(`No se pudo cargar tu perfil: ${error.message}`);
+        showAuthError(`No se pudo cargar tu perfil: ${traducirErrorAuth(error)}`);
         return;
     }
 
     currentProfile = profile;
-    if (!profile) {
-        // Si hay una invitación pendiente, unirse automáticamente sin pantallas intermedias
-        if (pendingInvite) {
-            try {
-                const joined = await handleJoinTribu(pendingInvite.token, getFriendlyUserName());
-                showToast(`🎉 ¡Bienvenido/a a "${joined?.nombre || pendingInvite.tribuName}"!`);
-                onboardingView.classList.add('hidden');
-                appView.classList.remove('hidden');
-                if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-                renderizarVista('dashboard');
-                return;
-            } catch (autoErr) {
-                console.warn('Auto-join failed, mostrando onboarding manual:', autoErr);
-                if (onboardingError) {
-                    onboardingError.innerText = autoErr.message || 'No se pudo aceptar la invitación.';
-                    onboardingError.classList.remove('hidden');
-                }
-            }
-        }
+    guardarPerfilSinConexion(profile);
+    if (profile?.nombre && !nombreParaInvitacion) nombreParaInvitacion = profile.nombre;
 
-        onboardingView.classList.remove('hidden');
-        appView.classList.add('hidden');
-
-        // Pre-configurar onboarding basado en la invitación
-        if (pendingInvite) {
-            tabJoinTribu?.classList.add('active');
-            tabCreateTribu?.classList.remove('active');
-            joinTribuForm?.classList.remove('hidden');
-            onboardingForm?.classList.add('hidden');
-            if (joinInviteTokenInput) joinInviteTokenInput.value = pendingInvite.token;
-            if (joinNombreInput) joinNombreInput.value = getFriendlyUserName();
-            if (inviteDetectedBanner && inviteDetectedText) {
-                inviteDetectedText.innerText = `Te estás uniendo a la tribu "${pendingInvite.tribuName}" mediante una invitación segura.`;
-                inviteDetectedBanner.classList.remove('hidden');
-            }
-        } else {
-            inviteDetectedBanner?.classList.add('hidden');
-        }
+    if (pendingInvite) {
+        await procesarInvitacionPendiente(pendingInvite, profile);
         return;
     }
 
-    // Si el usuario ya tenía perfil pero abre un enlace de otra tribu diferente
-    if (pendingInvite) {
-        try {
-            const joined = await handleJoinTribu(pendingInvite.token, profile.nombre);
-            showToast(`🎉 ¡Te has unido a "${joined.nombre}"!`);
-        } catch (err) {
-            authView.classList.remove('hidden');
-            appView.classList.add('hidden');
-            onboardingView.classList.add('hidden');
-            showAuthError(err.message || 'No se pudo aceptar la invitación.');
-            return;
-        }
+    // Sin perfil o expulsado de su familia (familia_id NULL): crear una tribu o unirse a otra
+    if (!profile || !profile.familia_id) {
+        resetConfirmacionOnboarding();
+        mostrarOnboarding();
+        return;
     }
 
     onboardingView.classList.add('hidden');
     appView.classList.remove('hidden');
     if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
+    salirModoSinConexion();
     await syncFamilyDataFromSupabase();
     renderizarVista('dashboard');
 }
@@ -2175,23 +2861,13 @@ async function mostrarApp() {
 async function handleJoinTribu(inviteOrToken, memberName) {
     if (!currentUser) throw new Error('Debes haber iniciado sesión');
 
-    let token = String(inviteOrToken || '').trim();
-    try {
-        if (token.startsWith('http://') || token.startsWith('https://')) {
-            token = new URL(token).searchParams.get('invite') || '';
-        }
-    } catch {
-        throw new Error('El enlace de invitación no es válido.');
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
-        throw new Error('Usa un enlace de invitación válido; los códigos antiguos ya no se aceptan.');
-    }
+    const token = normalizarTokenInvitacion(inviteOrToken);
 
     const { data, error } = await supabase.rpc('aceptar_invitacion_familia', {
         p_token: token,
-        p_nombre: memberName || getFriendlyUserName(),
+        p_nombre: (memberName || getFriendlyUserName()).slice(0, 50),
     });
-    if (error) throw error;
+    if (error) throw new Error(traducirErrorInvitacion(error));
 
     const profile = Array.isArray(data) ? data[0] : data;
     if (!profile?.familia_id || !profile?.familia_nombre) {
@@ -2204,7 +2880,7 @@ async function handleJoinTribu(inviteOrToken, memberName) {
         nombre: profile.nombre,
         rol: profile.rol,
     };
-    sessionStorage.removeItem('tribuapp_pending_invite');
+    descartarInvitacionPendiente();
     return { id: profile.familia_id, nombre: profile.familia_nombre };
 }
 
@@ -2224,28 +2900,51 @@ tabCreateTribu?.addEventListener('click', () => {
     onboardingError.classList.add('hidden');
 });
 
+// Si se cambia el enlace pegado, hay que volver a confirmar a qué familia lleva
+joinInviteTokenInput?.addEventListener('input', () => {
+    if (invitacionVerificada && joinInviteTokenInput.value.trim() !== invitacionVerificada.token) {
+        resetConfirmacionOnboarding();
+    }
+});
+
+document.getElementById('btn-reject-invite')?.addEventListener('click', () => {
+    descartarInvitacionPendiente();
+    resetConfirmacionOnboarding();
+    if (joinInviteTokenInput) joinInviteTokenInput.value = '';
+    onboardingError.classList.add('hidden');
+    showToast('Invitación descartada');
+});
+
 joinTribuForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     onboardingError.classList.add('hidden');
     btnJoinTribu.disabled = true;
-    btnJoinTribu.innerText = 'Uniéndote...';
+    btnJoinTribu.innerText = 'Comprobando...';
 
-    const inviteToken = joinInviteTokenInput.value.trim();
-    const nombre = joinNombreInput.value.trim() || getFriendlyUserName();
+    const nombre = (joinNombreInput.value.trim() || getFriendlyUserName()).slice(0, 50);
+    let confirmando = false;
 
     try {
-        const family = await handleJoinTribu(inviteToken, nombre);
+        const token = normalizarTokenInvitacion(joinInviteTokenInput.value);
+        // Primer paso: enseñar a qué familia lleva el enlace; el segundo envío la acepta.
+        if (invitacionVerificada?.token !== token) {
+            const info = await verInvitacion(token);
+            mostrarConfirmacionEnOnboarding(info);
+            confirmando = true;
+            return;
+        }
+        btnJoinTribu.innerText = 'Uniéndote...';
+        const family = await handleJoinTribu(token, nombre);
         showToast(`🎉 ¡Te has unido a "${family.nombre}"!`);
-        onboardingView.classList.add('hidden');
-        appView.classList.remove('hidden');
-        if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-        await renderizarVista('dashboard');
+        await entrarEnTribu();
     } catch (err) {
         onboardingError.innerText = err.message || 'No se pudo unir a la tribu';
         onboardingError.classList.remove('hidden');
     } finally {
         btnJoinTribu.disabled = false;
-        btnJoinTribu.innerText = 'Unirme a la Tribu';
+        if (!confirmando) {
+            btnJoinTribu.innerText = invitacionVerificada ? `Sí, unirme a ${invitacionVerificada.familia_nombre}` : 'Unirme a la Tribu';
+        }
     }
 });
 
@@ -2255,12 +2954,14 @@ onboardingForm.addEventListener('submit', async (event) => {
     btnOnboarding.disabled = true;
     btnOnboarding.innerText = 'Creando...';
 
-    const nombreFamilia = document.getElementById('tribu-nombre').value.trim();
+    const nombreFamilia = document.getElementById('tribu-nombre').value.trim().slice(0, 80);
+    const nombreUsuario = (document.getElementById('tribu-nombre-usuario')?.value.trim() || getFriendlyUserName()).slice(0, 50);
     const dieta = document.getElementById('tribu-dieta').value;
     const flexibilidad = document.getElementById('tribu-flexibilidad').value;
 
     if (!nombreFamilia) {
-        alert('Pon un nombre para tu tribu.');
+        onboardingError.innerText = 'Pon un nombre para tu tribu.';
+        onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
         btnOnboarding.innerText = 'Crear Tribu';
         return;
@@ -2271,7 +2972,7 @@ onboardingForm.addEventListener('submit', async (event) => {
             p_nombre: nombreFamilia,
             p_dieta_base: dieta,
             p_nivel_flexibilidad: flexibilidad,
-            p_nombre_usuario: getFriendlyUserName(),
+            p_nombre_usuario: nombreUsuario,
         });
         if (error) throw error;
         const profile = Array.isArray(data) ? data[0] : data;
@@ -2280,18 +2981,14 @@ onboardingForm.addEventListener('submit', async (event) => {
         }
         currentProfile = profile;
     } catch (error) {
-        let message = `No se pudo crear la tribu: ${error.message}`;
-        onboardingError.innerText = message;
+        onboardingError.innerText = `No se pudo crear la tribu: ${traducirErrorAuth(error)}`;
         onboardingError.classList.remove('hidden');
         btnOnboarding.disabled = false;
         btnOnboarding.innerText = 'Crear Tribu';
         return;
     }
 
-    onboardingView.classList.add('hidden');
-    appView.classList.remove('hidden');
-    if (headerTribeBadge) headerTribeBadge.classList.remove('hidden');
-    await renderizarVista('dashboard');
+    await entrarEnTribu();
     btnOnboarding.disabled = false;
     btnOnboarding.innerText = 'Crear Tribu';
     onboardingForm.reset();
@@ -2306,8 +3003,7 @@ navItems.forEach((item) => {
 
 async function renderizarVista(vista) {
     closeModal();
-    const smModal = document.getElementById('supermarket-modal');
-    if (smModal) smModal.remove();
+    cerrarModoSupermercado();
 
     currentView = vista;
     const titles = { dashboard: 'Resumen', tareas: 'Tareas', menus: 'Menú', compra: 'Compra' };
@@ -2339,15 +3035,28 @@ async function renderizarVista(vista) {
                 await renderDashboard(renderId);
         }
     } catch (error) {
-        if (renderId === viewRenderId) {
-            mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(error.message)}</p>`;
+        if (renderId !== viewRenderId) return;
+        if (esErrorDeRed(error)) {
+            // Sin red: repetimos la vista con los últimos datos guardados
+            if (!modoSinConexion && leerFamiliaSinConexion()) {
+                entrarModoSinConexion();
+                return renderizarVista(vista);
+            }
+            mostrarBannerSinConexion();
+            mainContent.innerHTML = '<p class="error-text" role="alert">Sin conexión y sin datos guardados para esta vista. Se cargará al volver la conexión.</p>';
+            return;
         }
+        mainContent.innerHTML = `<p class="error-text" role="alert">${escapeHtml(error.message)}</p>`;
     }
 }
 
 async function fetchFamilyData() {
     if (!currentProfile?.familia_id) {
         throw new Error('Tu perfil todavía no está vinculado a una tribu.');
+    }
+    if (modoSinConexion) {
+        const guardado = leerFamiliaSinConexion();
+        if (guardado) return guardado;
     }
 
     const [familyResult, membersResult, tasksResult] = await Promise.all([
@@ -2359,7 +3068,21 @@ async function fetchFamilyData() {
             .order('fecha_objetivo', { ascending: true }),
     ]);
 
-    if (familyResult.error) throw familyResult.error;
+    if (familyResult.error) {
+        // La familia ya no es visible (p. ej. un admin nos ha quitado): volver a comprobar el perfil
+        if (familyResult.error.code === 'PGRST116' && currentUser) {
+            const { data: perfil } = await supabase.from('usuarios').select('familia_id').eq('id', currentUser.id).maybeSingle();
+            if (!perfil?.familia_id) {
+                currentProfile = currentProfile ? { ...currentProfile, familia_id: null } : null;
+                if (typeof detenerSincronizacionTiempoReal === 'function') {
+                    try { detenerSincronizacionTiempoReal(); } catch {}
+                }
+                mostrarOnboarding('Ya no perteneces a esta familia. Crea una tribu nueva o únete con una invitación.');
+                throw new Error('Ya no perteneces a esta familia.');
+            }
+        }
+        throw familyResult.error;
+    }
     if (membersResult.error) throw membersResult.error;
 
     let tasks = [];
@@ -2371,11 +3094,13 @@ async function fetchFamilyData() {
         tasks = Array.isArray(storedTasks) ? storedTasks.filter(t => !String(t.id).startsWith('demo-')) : [];
     }
 
-    return {
+    const familyData = {
         family: familyResult.data,
         members: membersResult.data || [],
         tasks,
     };
+    guardarFamiliaSinConexion(familyData);
+    return familyData;
 }
 
 async function removeFamilyMember(member) {
@@ -2409,7 +3134,7 @@ async function openInviteModal(family, inviteToken = null) {
         });
         if (error) {
             console.error('Error al crear invitación segura:', error);
-            showToast(`No se pudo generar el enlace de invitación: ${error.message}`);
+            showToast(`No se pudo generar el enlace de invitación: ${traducirErrorInvitacion(error)}`);
             return;
         }
         const invitation = Array.isArray(data) ? data[0] : data;
@@ -2421,7 +3146,7 @@ async function openInviteModal(family, inviteToken = null) {
     }
 
     const publicUrl = getPublicAppUrl();
-    const directJoinLink = `${publicUrl.replace(/\/$/, '')}/?invite=${encodeURIComponent(inviteToken)}&tribu=${encodeURIComponent(family.nombre || 'Mi Hogar')}`;
+    const directJoinLink = `${publicUrl.replace(/\/$/, '')}/?invite=${encodeURIComponent(inviteToken)}`;
     const customDeployUrl = localStorage.getItem('tribuapp_custom_deploy_url') || '';
 
     const html = `
@@ -2439,7 +3164,7 @@ async function openInviteModal(family, inviteToken = null) {
             <div style="font-size: 11px; color: var(--primary); margin-top: 6px;">Tribu: ${escapeHtml(family?.nombre || 'Mi Hogar')}</div>
         </div>
         <p style="font-size: 12px; color: var(--text-muted); margin: -4px 0 14px;">
-            El enlace se puede reutilizar y caduca en 7 días.
+            El enlace caduca en 7 días y admite hasta 10 usos. Puedes invalidarlo desde «Miembros de la Tribu».
         </p>
 
         <div style="background: var(--card-secondary-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: left;">
@@ -2526,7 +3251,8 @@ async function renderDashboard(renderId) {
     const [{ family, members, tasks }, localState] = await Promise.all([fetchFamilyData(), getAppState()]);
     if (renderId !== viewRenderId) return;
 
-    const karmaMap = getKarmaPoints();
+    const karmaMap = await cargarPuntosFamilia();
+    if (renderId !== viewRenderId) return;
     const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
 
     if (headerTribeBadge) {
@@ -2741,8 +3467,27 @@ async function renderDashboard(renderId) {
                     </div>
                 `).join('')}
             </div>
+            ${currentProfile?.rol === 'Admin' ? `
+                <button type="button" id="btn-revoke-invites" class="btn-secondary" style="margin-top: 12px; font-size: 12px; padding: 8px 12px; width: 100%;">🔒 Invalidar enlaces de invitación</button>
+            ` : ''}
         </section>
     `;
+
+    document.getElementById('btn-revoke-invites')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        if (!confirm('¿Invalidar todos los enlaces de invitación activos? Quien tenga uno ya no podrá usarlo. Podrás crear uno nuevo con «Invitar».')) return;
+        button.disabled = true;
+        try {
+            const { error } = await supabase.rpc('revocar_invitaciones_familia', { p_familia_id: family.id });
+            if (error) throw error;
+            showToast('🔒 Enlaces de invitación invalidados');
+        } catch (error) {
+            console.error('Error al invalidar invitaciones:', error);
+            showToast(`⚠️ No se pudieron invalidar los enlaces: ${traducirErrorInvitacion(error)}`);
+        } finally {
+            button.disabled = false;
+        }
+    });
 
     mainContent.querySelectorAll('[data-nav-view]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -2787,7 +3532,7 @@ async function renderDashboard(renderId) {
                 await renderizarVista('dashboard');
             } catch (error) {
                 console.error('Error al quitar miembro de la familia:', error);
-                showToast(`No se pudo quitar al miembro: ${error.message}`);
+                showToast(`No se pudo quitar al miembro: ${traducirErrorAuth(error)}`);
                 button.disabled = false;
             }
         });
@@ -2814,119 +3559,116 @@ async function renderDashboard(renderId) {
 
 // --- TAREAS VIEW (Filtros, Recurrencia y Progreso Visual) ---
 
+// Crea la tarea en el catálogo de la familia y su asignación. Si falla la asignación,
+// borra el catálogo recién creado para no dejar huérfanos. Lanza el error real.
+async function crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia }) {
+    const familiaId = currentProfile?.familia_id;
+    if (!familiaId) throw new Error('Tu perfil no está vinculado a una tribu.');
+
+    const { data: catalog, error: catalogError } = await supabase.from('tareas_catalogo')
+        .insert({
+            familia_id: familiaId,
+            nombre,
+            recurrencia_sugerida: recurrencia
+        })
+        .select('id')
+        .single();
+    if (catalogError) throw catalogError;
+    if (!catalog?.id) throw new Error('Supabase no devolvió la tarea creada.');
+
+    const { error: assignmentError } = await supabase.from('tareas_asignadas')
+        .insert({
+            familia_id: familiaId,
+            tarea_id: catalog.id,
+            asignado_a: asignadoA,
+            fecha_objetivo: fecha,
+            recurrencia,
+            estado: 'Pendiente'
+        });
+    if (assignmentError) {
+        const { error: cleanupError } = await supabase.from('tareas_catalogo').delete().eq('id', catalog.id);
+        if (cleanupError) console.warn('No se pudo deshacer la tarea del catálogo:', cleanupError);
+        throw assignmentError;
+    }
+}
+
 async function completarTarea(taskId) {
-    const isDemo = String(taskId).startsWith('demo-');
-    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    const task = storedTasks.find(t => String(t.id) === String(taskId));
-
-    // 1. Actualización optimista local
-    const updated = storedTasks.map((t) => String(t.id) === String(taskId) ? { ...t, estado: 'Completada' } : t);
-    saveToStorage(STORAGE_KEYS.tasks, updated);
-
-    // 2. Persistir en Supabase solo si es tarea real (no demo)
-    if (!isDemo) {
-        try {
-            const { error } = await supabase.from('tareas_asignadas')
-                .update({ estado: 'Completada' })
-                .eq('id', taskId);
-
-            if (error) {
-                console.error('Error al completar tarea en Supabase:', error);
-                showToast(`Aviso: ${error.message || 'No se pudo guardar en la nube'}`);
-            }
-        } catch (err) {
-            console.error('Excepción al completar tarea:', err);
-        }
+    // La BD completa la tarea de forma atómica (sólo si sigue Pendiente) y programa la siguiente
+    // ocurrencia si es recurrente. Los puntos y la celebración sólo llegan si el servidor confirma.
+    let resultado = null;
+    try {
+        const { data, error } = await supabase.rpc('completar_tarea', { p_asignacion_id: taskId });
+        if (error) throw error;
+        resultado = Array.isArray(data) ? data[0] : data;
+    } catch (err) {
+        console.error('Error al completar tarea en Supabase:', err);
+        showToast('⚠️ No se pudo completar la tarea. Revisa tu conexión e inténtalo de nuevo.');
+        await renderizarVista(currentView);
+        return false;
     }
 
-    // 3. Puntos Tribu y Gamificación infantil / familiar
-    const assignedMemberId = task?.asignado_a || currentProfile?.id;
-    const newTotalPoints = addKarmaPoints(assignedMemberId, 10);
+    if (!resultado?.ok) {
+        const motivo = resultado?.motivo === 'ya_completada_o_no_existe'
+            ? 'Esta tarea ya estaba completada o se ha eliminado.'
+            : 'No se pudo completar la tarea.';
+        showToast(`ℹ️ ${motivo} Se ha actualizado la lista.`);
+        await renderizarVista(currentView);
+        return false;
+    }
+
+    const puntos = Number(resultado.puntos) || 10;
+    const karma = await cargarPuntosFamilia();
+    const totalTribu = Object.values(karma).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
     triggerConfetti();
 
     if ('vibrate' in navigator) {
         try { navigator.vibrate([40, 50, 40]); } catch {}
     }
 
-    showToast(`🎉 ¡Tarea completada! +10 Puntos Tribu ⭐ (Total: ${newTotalPoints} pts)`);
+    let mensaje = `🎉 ¡Tarea completada! +${puntos} Puntos Tribu ⭐ (Tribu: ${totalTribu} pts)`;
+    if (resultado.siguiente_fecha) {
+        const siguiente = new Date(`${resultado.siguiente_fecha}T00:00:00`).toLocaleDateString('es-ES');
+        mensaje += ` · Próxima: ${siguiente}`;
+    }
+    showToast(mensaje);
 
-    // Comprobar si todas las tareas de hoy están completadas
+    await renderizarVista(currentView);
+
+    // Comprobar con los datos ya recargados si todas las tareas de hoy están completadas
     const todayIso = getLocalDateInputValue();
-    const remainingToday = updated.filter(t => t.fecha_objetivo === todayIso && t.estado !== 'Completada');
-    if (remainingToday.length === 0 && updated.some(t => t.fecha_objetivo === todayIso)) {
+    const tareas = readFromStorage(STORAGE_KEYS.tasks, []);
+    const deHoy = Array.isArray(tareas) ? tareas.filter(t => t.fecha_objetivo === todayIso) : [];
+    if (deHoy.length && deHoy.every(t => t.estado === 'Completada')) {
         setTimeout(() => {
             showToast('🏆 ¡Todas las tareas de hoy completadas! Medalla de oro para la tribu.');
         }, 800);
     }
-
-    // 4. Recurrencia: programar próxima aparición automática si es periódica (solo tareas reales de la tribu)
-    if (!isDemo && task && task.recurrencia && task.recurrencia !== 'Puntual') {
-        const nextDate = computeNextRecurringDate(task.fecha_objetivo || getLocalDateInputValue(), task.recurrencia);
-        if (nextDate) {
-            let insertedInCloud = false;
-            if (currentProfile?.familia_id && task.tarea_id) {
-                try {
-                    const { error: recErr } = await supabase.from('tareas_asignadas').insert({
-                        familia_id: currentProfile.familia_id,
-                        tarea_id: task.tarea_id,
-                        asignado_a: task.asignado_a || null,
-                        fecha_objetivo: nextDate,
-                        recurrencia: task.recurrencia,
-                        estado: 'Pendiente'
-                    });
-                    if (!recErr) insertedInCloud = true;
-                } catch (recErr) {
-                    console.warn('Error programando tarea recurrente en Supabase:', recErr);
-                }
-            }
-            if (!insertedInCloud) {
-                const recurringTask = {
-                    id: crypto.randomUUID(),
-                    tarea_id: task.tarea_id || null,
-                    fecha_objetivo: nextDate,
-                    estado: 'Pendiente',
-                    asignado_a: task.asignado_a || null,
-                    recurrencia: task.recurrencia,
-                    tareas_catalogo: { nombre: task.tareas_catalogo?.nombre || 'Tarea' }
-                };
-                const currentList = readFromStorage(STORAGE_KEYS.tasks, []);
-                currentList.push(recurringTask);
-                saveToStorage(STORAGE_KEYS.tasks, currentList);
-            }
-        }
-    }
-
-    await renderizarVista(currentView);
+    return true;
 }
 
 async function eliminarTarea(taskId) {
-    const isDemo = String(taskId).startsWith('demo-');
-    const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-    const updated = storedTasks.filter((t) => String(t.id) !== String(taskId));
-    saveToStorage(STORAGE_KEYS.tasks, updated);
-
-    if (!isDemo) {
-        try {
-            const { error } = await supabase.from('tareas_asignadas')
-                .delete()
-                .eq('id', taskId);
-            if (error) {
-                console.error('Error al eliminar tarea en Supabase:', error);
-            }
-        } catch (err) {
-            console.error('Excepción al eliminar tarea:', err);
+    try {
+        const { data, error } = await supabase.from('tareas_asignadas')
+            .delete()
+            .eq('id', taskId)
+            .select('id');
+        if (error) throw error;
+        if (!Array.isArray(data) || data.length === 0) {
+            showToast('ℹ️ La tarea ya no existe o no tienes permiso para eliminarla.');
+        } else {
+            showToast('Tarea eliminada');
         }
+    } catch (err) {
+        console.error('Error al eliminar tarea en Supabase:', err);
+        showToast('⚠️ No se pudo eliminar la tarea. Inténtalo de nuevo.');
     }
-
-    showToast('Tarea eliminada');
     await renderizarVista(currentView);
 }
 
 async function cargarVistaTareas(renderId) {
-    const { members, tasks } = await fetchFamilyData();
+    const [{ members, tasks }, karmaMap] = await Promise.all([fetchFamilyData(), cargarPuntosFamilia()]);
     if (renderId !== viewRenderId) return;
 
-    const karmaMap = getKarmaPoints();
     const totalKarma = Object.values(karmaMap).reduce((acc, val) => acc + (typeof val === 'number' ? val : 0), 0);
     const sortedMembers = [...members].map(m => ({
         ...m,
@@ -3044,8 +3786,8 @@ async function cargarVistaTareas(renderId) {
                     <option value="Puntual">Puntual (una sola vez)</option>
                     <option value="Diaria">🔄 Diaria (todos los días)</option>
                     <option value="Semanal">🔄 Semanal (cada 7 días)</option>
-                    <option value="Quincenal">🔄 Quincenal (cada 15 días)</option>
-                    <option value="Mensual">🔄 Mensual</option>
+                    <option value="Quincenal">🔄 Quincenal (cada 14 días)</option>
+                    <option value="Mensual">🔄 Mensual (mismo día cada mes)</option>
                 </select>
             </div>
 
@@ -3080,8 +3822,8 @@ async function cargarVistaTareas(renderId) {
 
             return `
                 <div class="task-card ${completed ? 'completed' : ''}">
-                    <div style="flex: 1;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                             <strong>${escapeHtml(task.tareas_catalogo?.nombre || 'Tarea')}</strong>
                             <span class="task-points-badge" title="Puntos al completar">⭐ +10</span>
                             ${isOverdue ? '<span class="badge-overdue">Atrasada</span>' : ''}
@@ -3166,40 +3908,13 @@ async function cargarVistaTareas(renderId) {
         button.disabled = true;
         button.innerText = 'Guardando...';
         try {
-            const { data: catalog, error: catalogError } = await supabase.from('tareas_catalogo')
-                .insert({
-                    familia_id: currentProfile.familia_id,
-                    nombre,
-                    recurrencia_sugerida: recurrencia
-                })
-                .select('id')
-                .single();
-            if (catalogError) throw catalogError;
-
-            const { error: assignmentError } = await supabase.from('tareas_asignadas')
-                .insert({
-                    familia_id: currentProfile.familia_id,
-                    tarea_id: catalog.id,
-                    asignado_a: asignadoA,
-                    fecha_objetivo: fecha,
-                    recurrencia: recurrencia,
-                    estado: 'Pendiente'
-                })
-                .select('id')
-                .single();
-            if (assignmentError) throw assignmentError;
+            await crearTareaEnSupabase({ nombre, asignadoA, fecha, recurrencia });
         } catch (error) {
-            console.warn('Guardando tarea localmente:', error.message);
-            const storedTasks = readFromStorage(STORAGE_KEYS.tasks, []);
-            storedTasks.push({
-                id: crypto.randomUUID(),
-                fecha_objetivo: fecha,
-                estado: 'Pendiente',
-                asignado_a: asignadoA,
-                recurrencia,
-                tareas_catalogo: { nombre },
-            });
-            saveToStorage(STORAGE_KEYS.tasks, storedTasks);
+            console.error('Error al crear la tarea:', error);
+            showToast(`⚠️ No se pudo crear la tarea: ${error.message || 'error de conexión'}`);
+            button.disabled = false;
+            button.innerText = 'Guardar Tarea';
+            return;
         }
 
         showToast('Tarea creada y asignada');
@@ -3245,7 +3960,7 @@ function openRecipeModal(dish) {
         </ul>
         <div class="modal-footer">
             <button type="button" id="btn-add-recipe-to-shop" class="btn-primary">🛒 Pasar estos ingredientes a la compra</button>
-            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cerrar</button>
+            <button type="button" class="btn-secondary" data-modal-close>Cerrar</button>
         </div>
     `;
 
@@ -3321,31 +4036,20 @@ function openRecipeModal(dish) {
         }
     });
 
-    document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', () => {
-        const state = getAppState();
-        let added = 0;
-        ingList.forEach(ing => {
-            const exists = state.shopping.some(s => s.nombre.toLowerCase() === ing.toLowerCase() && !s.comprado);
-            if (!exists) {
-                const newItem = {
-                    id: crypto.randomUUID(),
-                    nombre: ing,
-                    seccion: getAisleCategory(ing),
-                    comprado: false
-                };
-                state.shopping.push(newItem);
-                persistShoppingItemToSupabase(newItem, 'upsert');
-                added++;
-            }
-        });
-        saveAppState(state);
-        showToast(`¡Añadidos ${added} ingredientes a la lista de compra!`);
+    document.getElementById('btn-add-recipe-to-shop')?.addEventListener('click', async () => {
+        const realIngredients = listaDeTextos(dish.ingredientes);
         closeModal();
+        if (!realIngredients.length) {
+            showToast('Este plato no tiene ingredientes registrados.');
+            return;
+        }
+        const added = await anadirProductosACompra(realIngredients.map(nombre => ({ nombre })));
+        if (added > 0) showToast(`¡Añadido${added === 1 ? '' : 's'} ${added} ingrediente${added === 1 ? '' : 's'} a la lista de compra!`);
+        else if (added === 0) showToast('Esos ingredientes ya estaban en la lista de compra.');
     });
 }
 
 function openSwapDishModal(dish) {
-    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
     const html = `
         <div class="modal-header">
             <h3>🔄 Cambiar plato con IA</h3>
@@ -3356,7 +4060,7 @@ function openSwapDishModal(dish) {
         </p>
         <div id="swap-status-box" style="text-align: center; padding: 24px 10px;">
             <p style="font-weight: 700; color: var(--primary); margin-bottom: 4px;">Pensando 3 alternativas con Gemini...</p>
-            <p style="font-size: 12px; color: var(--text-muted);">Buscando opciones equilibradas para dieta ${escapeHtml(curDiet)}.</p>
+            <p id="swap-diet-text" style="font-size: 12px; color: var(--text-muted);">Buscando opciones equilibradas para la dieta de tu familia.</p>
         </div>
         <div id="swap-error-box" class="error-text hidden" style="margin-bottom: 12px;"></div>
         <div id="swap-results-box" class="hidden"></div>
@@ -3370,6 +4074,9 @@ function openSwapDishModal(dish) {
         const resultsBox = document.getElementById('swap-results-box');
 
         try {
+            const curDiet = dietaParaIA(await obtenerDietaFamilia());
+            const dietText = document.getElementById('swap-diet-text');
+            if (dietText) dietText.innerText = `Buscando opciones equilibradas para dieta ${curDiet}.`;
             const { data, error } = await supabase.functions.invoke('generate-menu', {
                 body: {
                     action: 'swap_dish',
@@ -3417,34 +4124,25 @@ function openSwapDishModal(dish) {
             `;
 
             resultsBox.querySelectorAll('.btn-select-alt').forEach((btn) => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const chosen = data.alternatives[Number(btn.dataset.altIdx)];
                     if (!chosen) return;
-                    const state = getAppState();
-                    state.menu = state.menu.map((m) => {
-                        if (m.id === dish.id || (m.dia === dish.dia && m.tipo === dish.tipo)) {
-                            return {
-                                ...m,
-                                nombre: chosen.nombre,
-                                tiempo: chosen.tiempo || '25 min',
-                                ingredientes: Array.isArray(chosen.ingredientes) ? chosen.ingredientes : []
-                            };
-                        }
-                        return m;
-                    });
-                    saveAppState(state);
-                    persistMenuToSupabase(state.menu);
-                    showToast(`✨ ¡Plato cambiado a "${chosen.nombre}"!`);
                     closeModal();
-                    if (currentView === 'menus') renderMenuView();
-                    else if (currentView === 'dashboard') renderDashboard(viewRenderId);
+                    const ok = await guardarPlatoEnMenu({
+                        dia: dish.dia,
+                        tipo: dish.tipo,
+                        nombre: chosen.nombre,
+                        tiempo: chosen.tiempo || '25 min',
+                        ingredientes: listaDeTextos(chosen.ingredientes)
+                    });
+                    if (ok) showToast(`✨ ¡Plato cambiado a "${chosen.nombre}"!`);
                 });
             });
         } catch (err) {
             console.error('Error al cambiar plato:', err);
             statusBox?.classList.add('hidden');
             if (errorBox) {
-                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar alternativas.'}`;
+                errorBox.innerText = err?.message || 'No se pudieron generar alternativas.';
                 errorBox.classList.remove('hidden');
             }
         }
@@ -3545,7 +4243,7 @@ function openFridgeModal() {
 
             <div class="modal-footer" id="fridge-footer" style="margin-top: 14px;">
                 <button type="submit" class="btn-primary btn-ai">✨ Buscar recetas con IA</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
 
@@ -3614,12 +4312,14 @@ function openFridgeModal() {
             }
         } catch (callErr) {
             console.warn('IA no disponible en nevera o tiempo excedido, usando recetas curadas de aprovechamiento:', callErr);
-            recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
+            recipes = null;
         }
 
         try {
-            if (!Array.isArray(recipes) || !recipes.length) {
+            const recetasDelChef = !Array.isArray(recipes) || !recipes.length;
+            if (recetasDelChef) {
                 recipes = getClientCuratedFridgeRecipes(allIngredients, tiempoMax);
+                showToast('No se pudo usar la IA; te proponemos recetas del chef.');
             }
 
             statusBox?.classList.add('hidden');
@@ -3642,11 +4342,11 @@ function openFridgeModal() {
                             </div>
                             <p class="fridge-recipe-desc">${escapeHtml(r.descripcion || '')}</p>
                             <div style="font-size: 12px; margin-bottom: 6px;">
-                                <strong>Aprovecha:</strong> ${escapeHtml(Array.isArray(r.ingredientes_usados) ? r.ingredientes_usados.join(', ') : '')}
+                                <strong>Aprovecha:</strong> ${escapeHtml(listaDeTextos(r.ingredientes_usados).join(', '))}
                             </div>
-                            ${r.ingredientes_extra?.length ? `
+                            ${listaDeTextos(r.ingredientes_extra).length ? `
                                 <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
-                                    <strong>Básicos extra:</strong> ${escapeHtml(r.ingredientes_extra.join(', '))}
+                                    <strong>Básicos extra:</strong> ${escapeHtml(listaDeTextos(r.ingredientes_extra).join(', '))}
                                 </div>
                             ` : ''}
                             <ol class="fridge-steps-list">
@@ -3672,34 +4372,21 @@ function openFridgeModal() {
             });
 
             resultsContainer.querySelectorAll('.btn-assign-fridge').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const r = recipes[Number(btn.dataset.fridgeIdx)];
                     const tipo = btn.dataset.assignType;
                     if (!r) return;
 
-                    const state = getAppState();
-                    const existingIdx = state.menu.findIndex(m => m.dia === todayName && m.tipo === tipo);
-                    const newMeal = {
-                        id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(),
+                    closeModal();
+                    const ok = await guardarPlatoEnMenu({
                         dia: todayName,
                         tipo,
                         nombre: r.nombre,
                         tiempo: r.tiempo || '25 min',
-                        ingredientes: Array.isArray(r.ingredientes_usados) ? [...r.ingredientes_usados, ...(r.ingredientes_extra || [])] : []
-                    };
-
-                    if (existingIdx >= 0) {
-                        state.menu[existingIdx] = newMeal;
-                    } else {
-                        state.menu.push(newMeal);
-                    }
-
-                    saveAppState(state);
-                    persistMenuToSupabase(state.menu);
-                    showToast(`🍽️ "${r.nombre}" asignado a la ${tipo.toLowerCase()} de hoy!`);
-                    closeModal();
-                    if (currentView === 'dashboard') renderDashboard(viewRenderId);
-                    else if (currentView === 'menus') renderMenuView();
+                        // ingredientes_extra puede llegar como texto: nunca se trocea en caracteres.
+                        ingredientes: [...listaDeTextos(r.ingredientes_usados), ...listaDeTextos(r.ingredientes_extra)]
+                    });
+                    if (ok) showToast(`🍽️ "${r.nombre}" asignado a la ${tipo.toLowerCase()} de hoy!`);
                 });
             });
 
@@ -3708,7 +4395,7 @@ function openFridgeModal() {
             if (statusBox) statusBox.classList.add('hidden');
             if (footer) footer.classList.remove('hidden');
             if (errorBox) {
-                errorBox.innerText = `Error: ${err.message || 'No se pudieron generar recetas.'}`;
+                errorBox.innerText = err?.message || 'No se pudieron generar recetas.';
                 errorBox.classList.remove('hidden');
             }
         }
@@ -3717,7 +4404,35 @@ function openFridgeModal() {
 
 let supermarketWakeLock = null;
 
+function liberarWakeLockSupermercado() {
+    if (!supermarketWakeLock) return;
+    const lock = supermarketWakeLock;
+    supermarketWakeLock = null;
+    try { Promise.resolve(lock.release()).catch(() => {}); } catch {}
+}
+
+function onSupermercadoKeydown(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    cerrarModoSupermercado({ volverACompra: true });
+}
+
+// Cierra el modo supermercado (si está abierto) y libera el Wake Lock
+function cerrarModoSupermercado({ volverACompra = false } = {}) {
+    liberarWakeLockSupermercado();
+    document.removeEventListener('keydown', onSupermercadoKeydown);
+    const overlay = document.getElementById('supermarket-modal');
+    if (!overlay) return;
+    overlay.remove();
+    if (modalContainer?.classList.contains('hidden')) appView?.removeAttribute('inert');
+    if (volverACompra) {
+        renderCompraView();
+        document.getElementById('btn-open-supermarket')?.focus();
+    }
+}
+
 async function openSupermarketMode() {
+    if (document.getElementById('supermarket-modal')) return;
     if ('wakeLock' in navigator) {
         try {
             supermarketWakeLock = await navigator.wakeLock.request('screen');
@@ -3729,6 +4444,9 @@ async function openSupermarketMode() {
     const overlay = document.createElement('div');
     overlay.className = 'supermarket-overlay';
     overlay.id = 'supermarket-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'supermarket-title');
 
     function renderSupermarketContent() {
         const state = getAppState();
@@ -3755,21 +4473,25 @@ async function openSupermarketMode() {
                         <span>${items.length} pendientes</span>
                     </div>
                     ${items.map(it => `
-                        <div class="supermarket-item-card" data-sm-toggle="${escapeHtml(it.id)}">
-                            <div class="supermarket-checkbox">✓</div>
+                        <button type="button" class="supermarket-item-card" data-sm-toggle="${escapeHtml(it.id)}" aria-pressed="false">
+                            <span class="supermarket-checkbox" aria-hidden="true">✓</span>
                             <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
                             ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
-                        </div>
+                        </button>
                     `).join('')}
                 </div>
             `;
         });
 
+        // Al repintar se conserva el foco en la tarjeta (o botón) que lo tenía
+        const focoPrevio = overlay.contains(document.activeElement)
+            ? (document.activeElement.dataset.smToggle || document.activeElement.id || null) : null;
+
         overlay.innerHTML = `
             <div class="supermarket-header">
                 <div class="supermarket-header-top">
                     <div class="supermarket-title-box">
-                        <h3>🛒 Supermercado</h3>
+                        <h3 id="supermarket-title">🛒 Supermercado</h3>
                         ${supermarketWakeLock ? `<span class="supermarket-wakelock-pill">🟢 Pantalla encendida</span>` : ''}
                     </div>
                     <button type="button" class="btn-exit-supermarket" id="btn-close-sm">✕ Salir</button>
@@ -3793,11 +4515,11 @@ async function openSupermarketMode() {
                             <span>✅ Ya en el carrito (${completedItems.length})</span>
                         </div>
                         ${completedItems.map(it => `
-                            <div class="supermarket-item-card done" data-sm-toggle="${escapeHtml(it.id)}">
-                                <div class="supermarket-checkbox">✓</div>
+                            <button type="button" class="supermarket-item-card done" data-sm-toggle="${escapeHtml(it.id)}" aria-pressed="true">
+                                <span class="supermarket-checkbox" aria-hidden="true">✓</span>
                                 <span class="supermarket-item-name">${escapeHtml(it.nombre)}</span>
                                 ${it.cantidad ? `<span style="font-size: 13px; color: var(--text-muted);">${escapeHtml(it.cantidad)}</span>` : ''}
-                            </div>
+                            </button>
                         `).join('')}
                     </div>
                 ` : ''}
@@ -3805,30 +4527,32 @@ async function openSupermarketMode() {
         `;
 
         overlay.querySelector('#btn-close-sm')?.addEventListener('click', () => {
-            if (supermarketWakeLock) {
-                try { supermarketWakeLock.release(); } catch {}
-                supermarketWakeLock = null;
-            }
-            overlay.remove();
-            renderCompraView();
+            cerrarModoSupermercado({ volverACompra: true });
         });
+
+        if (focoPrevio) {
+            const destino = [...overlay.querySelectorAll('[data-sm-toggle], #btn-close-sm')]
+                .find(el => el.dataset.smToggle === focoPrevio || el.id === focoPrevio);
+            destino?.focus({ preventScroll: false });
+        }
 
         overlay.querySelectorAll('[data-sm-toggle]').forEach(card => {
             card.addEventListener('click', () => {
                 const id = card.dataset.smToggle;
-                const curState = getAppState();
-                const item = curState.shopping.find(i => i.id === id);
+                const item = getAppState().shopping.find(i => i.id === id);
                 if (!item) return;
-                item.comprado = !item.comprado;
-                saveAppState(curState);
-                persistShoppingItemToSupabase(item, 'update');
-                renderSupermarketContent();
+                // marcarProductoComprado repinta el supermercado (overlay.refrescar) y revierte si falla.
+                marcarProductoComprado(id, !item.comprado);
             });
         });
     }
 
+    overlay.refrescar = renderSupermarketContent;
     renderSupermarketContent();
     document.body.appendChild(overlay);
+    appView?.setAttribute('inert', '');
+    document.addEventListener('keydown', onSupermercadoKeydown);
+    overlay.querySelector('#btn-close-sm')?.focus();
 }
 
 
@@ -3890,7 +4614,7 @@ function openPantryReviewModal() {
         </div>
         <div class="modal-footer">
             <button type="button" id="btn-confirm-pantry-to-shop" class="btn-primary">Añadir a la lista de compra</button>
-            <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+            <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
         </div>
     `;
 
@@ -3926,12 +4650,11 @@ function openPantryReviewModal() {
         chks.forEach(c => { c.checked = false; c.dispatchEvent(new Event('change')); });
     });
 
-    document.getElementById('btn-confirm-pantry-to-shop')?.addEventListener('click', () => {
+    document.getElementById('btn-confirm-pantry-to-shop')?.addEventListener('click', async () => {
         const toAdd = [];
         chks.forEach(c => {
             if (c.checked) {
                 toAdd.push({
-                    id: crypto.randomUUID(),
                     nombre: c.dataset.name,
                     seccion: c.dataset.seccion,
                     comprado: false
@@ -3939,21 +4662,18 @@ function openPantryReviewModal() {
             }
         });
 
-        if (toAdd.length) {
-            const curState = getAppState();
-            toAdd.forEach(newIt => {
-                const exists = curState.shopping.some(s => s.nombre.toLowerCase() === newIt.nombre.toLowerCase() && !s.comprado);
-                if (!exists) {
-                    curState.shopping.push(newIt);
-                    persistShoppingItemToSupabase(newIt, 'upsert');
-                }
-            });
-            saveAppState(curState);
-            showToast(`¡Añadidos ${toAdd.length} artículos a la lista de compra!`);
-        } else {
-            showToast('¡Todo listo! Tienes todos los ingredientes en casa.');
-        }
         closeModal();
+        if (!toAdd.length) {
+            showToast('¡Todo listo! Tienes todos los ingredientes en casa.');
+            return;
+        }
+        const added = await anadirProductosACompra(toAdd);
+        if (added > 0) {
+            const repetidos = toAdd.length - added;
+            showToast(`¡Añadido${added === 1 ? '' : 's'} ${added} artículo${added === 1 ? '' : 's'} a la lista de compra!${repetidos > 0 ? ` (${repetidos} ya estaba${repetidos === 1 ? '' : 'n'} en la lista)` : ''}`);
+        } else if (added === 0) {
+            showToast('Todo lo marcado ya estaba en la lista de compra.');
+        }
     });
 }
 
@@ -3991,7 +4711,7 @@ function getClientCuratedMenu(dieta = 'Mediterránea') {
 }
 
 function openAIGeneratorModal() {
-    const curDiet = currentProfile?.familia?.dieta_base || 'Mediterránea';
+    const curDiet = dietaFamiliaCache.familiaId === currentProfile?.familia_id ? dietaParaIA(dietaFamiliaCache.dieta) : 'Mediterránea';
     const html = `
         <div class="modal-header">
             <h3>✨ Generar Menú Semanal con IA</h3>
@@ -4006,8 +4726,8 @@ function openAIGeneratorModal() {
             <select id="ai-dieta" class="input-select">
                 <option value="Mediterránea" ${curDiet === 'Mediterránea' ? 'selected' : ''}>Dieta Mediterránea equilibrada</option>
                 <option value="Vegetariana" ${curDiet === 'Vegetariana' ? 'selected' : ''}>Vegetariana (sin carne ni pescado)</option>
-                <option value="Saludable y ligera">Baja en grasas, saludable y ligera</option>
-                <option value="Familiar con niños">Platos caseros que encantan a niños</option>
+                <option value="Saludable y ligera" ${curDiet === 'Saludable y ligera' ? 'selected' : ''}>Baja en grasas, saludable y ligera</option>
+                <option value="Familiar con niños" ${curDiet === 'Familiar con niños' ? 'selected' : ''}>Platos caseros que encantan a niños</option>
             </select>
 
             <label for="ai-preferencias">Preferencias o ingredientes deseados (opcional)</label>
@@ -4022,12 +4742,19 @@ function openAIGeneratorModal() {
 
             <div class="modal-footer" id="ai-modal-footer">
                 <button type="submit" class="btn-primary btn-ai">✨ Generar menú inteligente</button>
-                <button type="button" class="btn-secondary" onclick="document.getElementById('modal-container').classList.add('hidden')">Cancelar</button>
+                <button type="button" class="btn-secondary" data-modal-close>Cancelar</button>
             </div>
         </form>
     `;
 
     openModal(html);
+
+    // Si la dieta de la familia aún no estaba en caché, la cargamos y la preseleccionamos.
+    obtenerDietaFamilia().then((dietaFamilia) => {
+        const select = document.getElementById('ai-dieta');
+        if (select && !select.dataset.tocado) select.value = dietaParaIA(dietaFamilia);
+    });
+    document.getElementById('ai-dieta')?.addEventListener('change', (e) => { e.target.dataset.tocado = '1'; });
 
     document.getElementById('form-ai-menu')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -4041,6 +4768,8 @@ function openAIGeneratorModal() {
         if (statusBox) statusBox.classList.remove('hidden');
         if (footer) footer.classList.add('hidden');
 
+        let platos;
+        let deIA = true;
         try {
             const { data, error } = await supabase.functions.invoke('generate-menu', {
                 body: { dieta, preferencias }
@@ -4060,55 +4789,39 @@ function openAIGeneratorModal() {
             if (!Array.isArray(data?.menu) || data.menu.length !== 12) {
                 throw new Error('Gemini no devolvió los 12 platos esperados. Inténtalo de nuevo.');
             }
+            platos = data.menu;
+        } catch (err) {
+            console.warn('IA no disponible en este momento, usando menú seleccionado del chef:', err);
+            // Fallback de alta resiliencia: si Gemini está sobrecargado (503/429) o hay error de red
+            platos = getClientCuratedMenu(dieta);
+            deIA = false;
+        }
 
-            const state = getAppState();
-            state.menu = data.menu.map(m => ({
-                id: crypto.randomUUID(),
-                dia: m.dia,
-                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
-            saveAppState(state);
-            persistMenuToSupabase(state.menu);
+        const ok = await guardarMenuCompleto(platos.map(m => ({ ...m, ingredientes: listaDeTextos(m.ingredientes) })));
+        if (!ok) {
+            if (statusBox) statusBox.classList.add('hidden');
+            if (footer) footer.classList.remove('hidden');
+            if (errorBox) {
+                errorBox.innerText = 'No se pudo guardar el menú en la tribu. Revisa tu conexión e inténtalo de nuevo.';
+                errorBox.classList.remove('hidden');
+            }
+            return;
+        }
 
-            showToast('¡Menú semanal creado con éxito!');
-            closeModal();
-            renderMenuView();
+        showToast(deIA ? '¡Menú semanal creado con éxito!' : 'No se pudo usar la IA; te proponemos un menú del chef.');
+        closeModal();
+        if (currentView !== 'menus') renderizarVista('menus');
 
+        if (deIA) {
             showServiceWorkerNotification('🍽️ ¡Nuevo menú semanal listo!', {
                 body: `Se ha planificado el menú de la tribu (${dieta}) con 12 platos equilibrados.`,
                 data: { view: 'menus', url: './' }
             });
-
-            setTimeout(() => {
-                openPantryReviewModal();
-            }, 600);
-        } catch (err) {
-            console.warn('IA no disponible en este momento, usando menú seleccionado del chef:', err);
-            // Fallback de alta resiliencia: si Gemini está sobrecargado (503/429) o hay error de red
-            const curated = getClientCuratedMenu(dieta);
-            const state = getAppState();
-            state.menu = curated.map(m => ({
-                id: crypto.randomUUID(),
-                dia: m.dia,
-                tipo: m.tipo === 'Cena' ? 'Cena' : 'Comida',
-                nombre: m.nombre,
-                tiempo: m.tiempo || '25 min',
-                ingredientes: Array.isArray(m.ingredientes) ? m.ingredientes : []
-            }));
-            saveAppState(state);
-            persistMenuToSupabase(state.menu);
-
-            showToast('Menú del chef cargado con éxito');
-            closeModal();
-            renderMenuView();
-
-            setTimeout(() => {
-                openPantryReviewModal();
-            }, 600);
         }
+
+        setTimeout(() => {
+            openPantryReviewModal();
+        }, 600);
     });
 }
 
@@ -4262,10 +4975,20 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
             </div>
         </form>
 
+        ${state.menu.length ? '' : `
+            <div class="panel" style="text-align: center; margin-bottom: 14px;">
+                <p style="font-size: 28px; margin: 0;">🍽️</p>
+                <h4 style="margin: 6px 0 4px;">Todavía no hay menú esta semana</h4>
+                <p class="local-note" style="margin-bottom: 12px;">Genera un menú semanal completo en un momento o añade los platos a mano.</p>
+                <button type="button" id="btn-empty-generate-menu" class="btn-primary btn-ai">✨ Generar menú semanal</button>
+            </div>
+        `}
+
         <div class="weekly-days-list">
             ${daysHtml}
         </div>
     `;
+    document.getElementById('btn-empty-generate-menu')?.addEventListener('click', openAIGeneratorModal);
     addBackupControls(mainContent);
 
     if (prefillDia) {
@@ -4301,7 +5024,7 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
         document.getElementById('menu-form').classList.add('hidden');
     });
 
-    document.getElementById('menu-form').addEventListener('submit', (event) => {
+    document.getElementById('menu-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         const nombre = document.getElementById('menu-nombre').value.trim().slice(0, 120);
         const dia = document.getElementById('menu-dia').value;
@@ -4315,19 +5038,10 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
             return;
         }
 
-        const state = getAppState();
-        const existingIdx = state.menu.findIndex(m => m.dia === dia && m.tipo === tipo);
-        const newMeal = { id: existingIdx >= 0 ? state.menu[existingIdx].id : crypto.randomUUID(), nombre, dia, tipo, tiempo, ingredientes };
-        if (existingIdx >= 0) {
-            state.menu[existingIdx] = newMeal;
-        } else {
-            state.menu.push(newMeal);
-        }
-        if (!saveAppState(state)) return;
-        persistMenuToSupabase(state.menu);
         document.getElementById('menu-form').reset();
-        showToast('Plato guardado');
-        renderMenuView();
+        if (await guardarPlatoEnMenu({ nombre, dia, tipo, tiempo, ingredientes })) {
+            showToast('Plato guardado');
+        }
     });
 
     mainContent.querySelectorAll('[data-view-recipe]').forEach((button) => {
@@ -4347,19 +5061,7 @@ function renderMenuView(prefillDia = null, prefillTipo = null) {
 
     mainContent.querySelectorAll('[data-delete-menu]').forEach((button) => {
         button.addEventListener('click', () => {
-            const state = getAppState();
-            const deletedDish = state.menu.find((item) => item.id === button.dataset.deleteMenu);
-            state.menu = state.menu.filter((item) => item.id !== button.dataset.deleteMenu);
-            if (!saveAppState(state)) return;
-            if (deletedDish && currentProfile?.familia_id) {
-                supabase.from('familias_menus')
-                    .delete()
-                    .eq('familia_id', currentProfile.familia_id)
-                    .eq('dia', deletedDish.dia)
-                    .eq('tipo', deletedDish.tipo)
-                    .then();
-            }
-            renderMenuView();
+            eliminarPlatoDelMenu(button.dataset.deleteMenu);
         });
     });
 }
@@ -4435,7 +5137,9 @@ function renderCompraView() {
     });
 
     if (!aislesHtml) {
-        aislesHtml = '<p class="empty-state">La lista está vacía. ¡Todo comprado o despensa llena!</p>';
+        aislesHtml = totalItems
+            ? '<p class="empty-state">La lista está vacía. ¡Todo comprado o despensa llena!</p>'
+            : '<p class="empty-state">Todavía no hay nada en la lista. Añade productos con «+ Producto» o tráelos del menú.</p>';
     }
 
     mainContent.innerHTML = `
@@ -4555,58 +5259,26 @@ function renderCompraView() {
             document.getElementById('nueva-compra').reportValidity();
             return;
         }
-        const newItem = { id: crypto.randomUUID(), nombre, cantidad, seccion, comprado: false };
-        state.shopping.push(newItem);
-        if (!saveAppState(state)) return;
-        persistShoppingItemToSupabase(newItem, 'upsert');
-        renderCompraView();
+        anadirProductosACompra([{ nombre, cantidad, seccion }]);
     });
 
     document.getElementById('nueva-compra').addEventListener('input', (event) => event.target.setCustomValidity(''));
 
     mainContent.querySelectorAll('[data-toggle-shopping]').forEach((input) => {
         input.addEventListener('change', () => {
-            const state = getAppState();
-            let updatedItem = null;
-            state.shopping = state.shopping.map((item) => {
-                if (item.id === input.dataset.toggleShopping) {
-                    updatedItem = { ...item, comprado: input.checked };
-                    return updatedItem;
-                }
-                return item;
-            });
-            if (!saveAppState(state)) return;
-            if (updatedItem) {
-                persistShoppingItemToSupabase(updatedItem, 'update');
-            }
-            renderCompraView();
+            marcarProductoComprado(input.dataset.toggleShopping, input.checked);
         });
     });
 
     mainContent.querySelectorAll('[data-delete-shopping]').forEach((button) => {
         button.addEventListener('click', () => {
-            const id = button.dataset.deleteShopping;
-            const state = getAppState();
-            state.shopping = state.shopping.filter((item) => item.id !== id);
-            if (!saveAppState(state)) return;
-            persistShoppingItemToSupabase({ id }, 'delete');
-            renderCompraView();
+            eliminarProductosDeCompra([button.dataset.deleteShopping]);
         });
     });
 
-    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', async () => {
-        const state = getAppState();
-        const removedIds = state.shopping.filter((item) => item.comprado).map((item) => item.id);
-        state.shopping = state.shopping.filter((item) => !item.comprado);
-        if (!saveAppState(state)) return;
-        if (currentProfile?.familia_id && removedIds.length > 0) {
-            try {
-                await supabase.from('familias_compras').delete().in('id', removedIds);
-            } catch (err) {
-                console.warn('Error borrando comprados en Supabase:', err);
-            }
-        }
-        renderCompraView();
+    document.getElementById('btn-limpiar-comprados')?.addEventListener('click', () => {
+        const removedIds = getAppState().shopping.filter((item) => item.comprado).map((item) => item.id);
+        eliminarProductosDeCompra(removedIds);
     });
 }
 
@@ -4616,7 +5288,7 @@ function addBackupControls(container) {
     container.insertAdjacentHTML('beforeend', `
         <section class="panel backup-panel" aria-labelledby="backup-title">
             <h4 id="backup-title">Copia de seguridad</h4>
-            <p>El menú y la compra se guardan en este dispositivo. Descarga una copia para conservarlos o moverlos.</p>
+            <p>El menú y la compra se guardan en tu tribu y se comparten con todos sus miembros. Descarga una copia para conservarlos o restaurarlos más adelante.</p>
             <div class="form-actions">
                 <button type="button" id="btn-export-backup" class="btn-secondary">Descargar copia</button>
                 <button type="button" id="btn-import-backup" class="btn-secondary">Restaurar copia</button>
@@ -4660,19 +5332,38 @@ function addBackupControls(container) {
             }
             const backup = JSON.parse(await file.text());
             const restoredState = validateBackup(backup);
-            if (!window.confirm('Restaurar una copia sustituirá el menú y la lista de compra actuales de esta tribu. ¿Quieres continuar?')) {
+            if (!window.confirm('Restaurar una copia sustituirá el menú y la lista de compra actuales de toda la tribu. ¿Quieres continuar?')) {
                 status.innerText = 'Restauración cancelada.';
                 return;
             }
+            status.innerText = 'Restaurando la copia en la tribu...';
+            // Ids nuevos: la copia puede venir de otro dispositivo, de otra tribu o de la demo.
+            restoredState.shopping = restoredState.shopping.map(item => ({ ...item, id: crypto.randomUUID() }));
+            // En la tribu sólo cabe un plato por día y tipo: si la copia trae varios, gana el último.
+            restoredState.menu = Array.from(new Map(restoredState.menu.map(m => [`${m.dia}|${m.tipo}`, m])).values());
+            const previousState = getAppState();
             if (!saveAppState(restoredState)) {
                 status.innerText = 'No se pudo guardar la copia en este dispositivo.';
                 status.classList.add('error-text');
                 return;
             }
-            if (currentView === 'menus') renderMenuView();
-            if (currentView === 'compra') renderCompraView();
+            const uploadError = await restaurarCopiaEnSupabase(restoredState);
+            if (uploadError) {
+                // Sin guardar en la tribu, la copia no se aplica: volvemos al estado anterior.
+                saveAppState(previousState);
+                await syncFamilyDataFromSupabase();
+                refrescarVistasDeDatos({ forzar: true });
+                mostrarErrorGuardado('No se pudo restaurar la copia en la tribu.', uploadError);
+                const failedStatus = document.getElementById('backup-status');
+                if (failedStatus) {
+                    failedStatus.innerText = 'No se pudo completar la restauración en la tribu. Se muestran los datos que hay ahora en la tribu; inténtalo de nuevo.';
+                    failedStatus.classList.add('error-text');
+                }
+                return;
+            }
+            refrescarVistasDeDatos({ forzar: true });
             const refreshedStatus = document.getElementById('backup-status');
-            refreshedStatus.innerText = 'Copia restaurada correctamente.';
+            if (refreshedStatus) refreshedStatus.innerText = 'Copia restaurada correctamente en la tribu.';
         } catch (error) {
             const currentStatus = document.getElementById('backup-status');
             currentStatus.innerText = `No se pudo restaurar la copia: ${error.message}`;
@@ -4741,32 +5432,215 @@ supabase.auth.onAuthStateChange((event, session) => {
     }
 
     if (event === 'SIGNED_OUT') {
-        isPasswordRecovery = false;
-        setCurrentUser(null);
-        currentProfile = null;
-        authView.classList.remove('hidden');
-        onboardingView.classList.add('hidden');
-        appView.classList.add('hidden');
-        if (headerTribeBadge) headerTribeBadge.classList.add('hidden');
-        resetStandardAuthUI();
+        cerrarSesionLocal();
     }
 });
 
-// PWA Service Worker Registration & Notification Navigation
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch((err) => {
-            console.warn('Service worker registration failed:', err);
-        });
-    });
+// --- Modo sin conexión ---
+// El service worker se registra en register-sw.js. Aquí guardamos el último perfil y
+// los datos de la familia para poder arrancar y navegar sin red.
+const OFFLINE_KEYS = {
+    perfil: 'tribuapp-offline-perfil',
+    familia: 'tribuapp-offline-familia',
+};
+const SUPABASE_AUTH_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
+const OFFLINE_BANNER_TEXT = 'Sin conexión: mostrando los últimos datos guardados';
+let modoSinConexion = false;
 
-    navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'NAVIGATE_VIEW') {
-            const targetView = event.data.targetView || 'dashboard';
-            renderizarVista(targetView);
-        }
+function esErrorDeRed(error) {
+    if (!navigator.onLine) return true;
+    const texto = `${error?.name || ''} ${error?.message || error || ''}`;
+    return /Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed|AuthRetryableFetchError/i.test(texto);
+}
+
+function leerJsonLocal(key) {
+    try {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+    } catch {
+        return null;
+    }
+}
+
+function guardarJsonLocal(key, value) {
+    try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+        console.warn('No se pudieron guardar los datos sin conexión:', error);
+    }
+}
+
+function guardarPerfilSinConexion(profile) {
+    if (!currentUser?.id) return;
+    if (!profile?.familia_id) {
+        guardarJsonLocal(OFFLINE_KEYS.perfil, null);
+        guardarJsonLocal(OFFLINE_KEYS.familia, null);
+        return;
+    }
+    guardarJsonLocal(OFFLINE_KEYS.perfil, {
+        userId: currentUser.id,
+        email: currentUser.email || '',
+        perfil: profile,
+        guardadoEn: Date.now(),
     });
 }
+
+function guardarFamiliaSinConexion({ family, members, tasks }) {
+    if (!currentUser?.id || !currentProfile?.familia_id) return;
+    guardarJsonLocal(OFFLINE_KEYS.familia, {
+        userId: currentUser.id,
+        familiaId: currentProfile.familia_id,
+        family,
+        members,
+        tasks,
+        guardadoEn: Date.now(),
+    });
+}
+
+function leerFamiliaSinConexion() {
+    const guardado = leerJsonLocal(OFFLINE_KEYS.familia);
+    if (!guardado?.family || guardado.userId !== currentUser?.id || guardado.familiaId !== currentProfile?.familia_id) {
+        return null;
+    }
+    return {
+        family: guardado.family,
+        members: Array.isArray(guardado.members) ? guardado.members : [],
+        tasks: Array.isArray(guardado.tasks) ? guardado.tasks : [],
+    };
+}
+
+// Usuario de la sesión que supabase-js guarda en localStorage (sin tocar la red)
+function leerUsuarioSesionGuardada() {
+    const sesion = leerJsonLocal(SUPABASE_AUTH_KEY);
+    return sesion?.user || sesion?.currentSession?.user || null;
+}
+
+function mostrarBannerSinConexion(texto = OFFLINE_BANNER_TEXT) {
+    let banner = document.getElementById('offline-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'offline-banner';
+        banner.className = 'alert-banner';
+        banner.setAttribute('role', 'status');
+        mainContent.parentNode.insertBefore(banner, mainContent);
+    }
+    banner.innerText = `📡 ${texto}`;
+}
+
+function ocultarBannerSinConexion() {
+    document.getElementById('offline-banner')?.remove();
+}
+
+function entrarModoSinConexion() {
+    modoSinConexion = true;
+    mostrarBannerSinConexion();
+}
+
+function salirModoSinConexion() {
+    modoSinConexion = false;
+    ocultarBannerSinConexion();
+    document.getElementById('offline-view')?.classList.add('hidden');
+}
+
+function mostrarPantallaSinConexion() {
+    authView.classList.add('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.add('hidden');
+    let pantalla = document.getElementById('offline-view');
+    if (!pantalla) {
+        pantalla = document.createElement('div');
+        pantalla.id = 'offline-view';
+        pantalla.className = 'view-container';
+        pantalla.innerHTML = `
+            <div class="auth-card">
+                <h1>⛺ Tribuapp</h1>
+                <h2>📡 Sin conexión</h2>
+                <p role="status">No hay conexión a internet y este dispositivo todavía no tiene datos de tu tribu guardados. Conéctate y pulsa Reintentar.</p>
+                <button type="button" id="btn-offline-retry" class="btn-primary">Reintentar</button>
+            </div>`;
+        // Mismo centrado que #auth-view (vía CSSOM para no depender de estilos inline)
+        Object.assign(pantalla.style, { justifyContent: 'center', alignItems: 'center', padding: '20px' });
+        pantalla.querySelector('#btn-offline-retry').style.marginTop = '16px';
+        document.body.insertBefore(pantalla, appView);
+        pantalla.querySelector('#btn-offline-retry').addEventListener('click', reintentarConexion);
+    }
+    pantalla.classList.remove('hidden');
+}
+
+// Muestra la app con el último perfil guardado. Devuelve false si no hay sesión guardada
+// (entonces se sigue el flujo normal hacia el login).
+function arrancarSinConexion(usuario = null) {
+    const user = usuario || leerUsuarioSesionGuardada();
+    if (!user?.id) return false;
+
+    const guardado = leerJsonLocal(OFFLINE_KEYS.perfil);
+    if (!guardado?.perfil?.familia_id || guardado.userId !== user.id) {
+        mostrarPantallaSinConexion();
+        return true;
+    }
+
+    if (currentUser?.id !== user.id) setCurrentUser(user);
+    currentProfile = guardado.perfil;
+    document.getElementById('offline-view')?.classList.add('hidden');
+    authView.classList.add('hidden');
+    onboardingView.classList.add('hidden');
+    appView.classList.remove('hidden');
+    entrarModoSinConexion();
+
+    const familia = leerFamiliaSinConexion();
+    if (headerTribeBadge && familia?.family?.nombre) {
+        headerTribeBadge.innerText = `⛺ ${familia.family.nombre}`;
+        headerTribeBadge.classList.remove('hidden');
+    }
+    renderizarVista(currentView || 'dashboard');
+    return true;
+}
+
+async function reintentarConexion() {
+    const boton = document.getElementById('btn-offline-retry');
+    if (boton) {
+        boton.disabled = true;
+        boton.innerText = 'Conectando...';
+    }
+    try {
+        await checkSession();
+    } finally {
+        if (boton) {
+            boton.disabled = false;
+            boton.innerText = 'Reintentar';
+        }
+        if ([authView, onboardingView, appView].some((view) => !view.classList.contains('hidden'))) {
+            document.getElementById('offline-view')?.classList.add('hidden');
+        }
+    }
+}
+
+// Al volver la red: recargamos sesión, perfil y datos, y volvemos a la vista en la que estaba
+async function resincronizarTrasConexion() {
+    const vista = currentView || 'dashboard';
+    salirModoSinConexion();
+    await checkSession();
+    if (vista !== 'dashboard' && currentProfile && !appView.classList.contains('hidden')) {
+        renderizarVista(vista);
+    }
+}
+
+window.addEventListener('online', () => {
+    const pantalla = document.getElementById('offline-view');
+    if (pantalla && !pantalla.classList.contains('hidden')) {
+        reintentarConexion();
+    } else if (modoSinConexion || document.getElementById('offline-banner')) {
+        resincronizarTrasConexion();
+    }
+});
+
+window.addEventListener('offline', () => {
+    if (appView.classList.contains('hidden') || !currentProfile) return;
+    if (leerFamiliaSinConexion()) entrarModoSinConexion();
+    else mostrarBannerSinConexion('Sin conexión: los cambios no se guardarán hasta que vuelva la red');
+});
+
 
 initTheme();
 initNotifications();

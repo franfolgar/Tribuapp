@@ -12,6 +12,16 @@ const allowedDiets = [
   "Saludable y ligera",
   "Familiar con niños",
 ];
+const difficulties = ["Fácil", "Media", "Elaborada"];
+const allowedActions = ["full_menu", "recipe_steps", "swap_dish", "fridge_recipes"];
+
+// Límites de entrada
+const MAX_PLATO = 160; // igual que el CHECK de familias_menus.nombre
+const MAX_TIEMPO = 30;
+const MAX_INGREDIENTES = 40;
+const MAX_LARGO_INGREDIENTE = 80;
+const MAX_INGREDIENTES_NEVERA = 400;
+const GEMINI_TIMEOUT_MS = 20000;
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -60,6 +70,126 @@ function validateMenu(value: unknown) {
   }
 
   return combinations.size === menuDays.length * mealTypes.length;
+}
+
+// Texto no vacío recortado a `max` caracteres, o null
+function cleanText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text ? text.slice(0, max) : null;
+}
+
+// Lista de textos válidos (máx. `maxItems`, cada uno recortado a `maxLength`)
+function cleanTextList(value: unknown, maxItems: number, maxLength: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => cleanText(item, maxLength))
+    .filter((item): item is string => item !== null)
+    .slice(0, maxItems);
+}
+
+// Salidas de Gemini: se validan y recortan; null si no sirven (se usa el fallback)
+function sanitizeAlternatives(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const alternatives = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const nombre = cleanText(item.nombre, 120);
+    const ingredientes = cleanTextList(item.ingredientes, 6, 100);
+    if (!nombre || ingredientes.length < 2) continue;
+    alternatives.push({ nombre, tiempo: cleanText(item.tiempo, 40) || "25 min", ingredientes });
+    if (alternatives.length === 3) break;
+  }
+  return alternatives.length ? alternatives : null;
+}
+
+function sanitizeRecipe(value: unknown, plato: string) {
+  if (!isRecord(value)) return null;
+  const pasos = cleanTextList(value.pasos, 8, 500);
+  if (pasos.length < 2) return null;
+  const dificultad = typeof value.dificultad === "string" && difficulties.includes(value.dificultad.trim())
+    ? value.dificultad.trim()
+    : "Media";
+  return {
+    plato: cleanText(value.plato, MAX_PLATO) || plato,
+    tiempo: cleanText(value.tiempo, 40) || "25 min",
+    dificultad,
+    pasos,
+    truco_chef: cleanText(value.truco_chef, 400) || "",
+  };
+}
+
+function sanitizeFridgeRecipes(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const recipes = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const nombre = cleanText(item.nombre, 120);
+    const pasos = cleanTextList(item.pasos, 6, 400);
+    if (!nombre || pasos.length < 2) continue;
+    recipes.push({
+      nombre,
+      tiempo: cleanText(item.tiempo, 40) || "25 min",
+      descripcion: cleanText(item.descripcion, 300) || "",
+      ingredientes_usados: cleanTextList(item.ingredientes_usados, 10, 100),
+      ingredientes_extra: cleanTextList(item.ingredientes_extra, 10, 100),
+      pasos,
+    });
+    if (recipes.length === 3) break;
+  }
+  return recipes.length ? recipes : null;
+}
+
+// Comprueba la sesión con Supabase Auth y que el usuario pertenezca a una familia.
+// Devuelve una Response de error si no puede usar la función.
+async function requireUserWithFamily(request: Request): Promise<Response | null> {
+  const authorization = request.headers.get("Authorization");
+  const bearerToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!bearerToken) {
+    return jsonResponse({ error: "Inicia sesión para usar la IA." }, 401);
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseApiKey = Deno.env.get("SUPABASE_ANON_KEY") || request.headers.get("apikey");
+  if (!supabaseUrl || !supabaseApiKey) {
+    console.error("Faltan SUPABASE_URL o SUPABASE_ANON_KEY en la Edge Function.");
+    return jsonResponse({ error: "El servicio no está configurado correctamente." }, 500);
+  }
+  const headers = { apikey: supabaseApiKey, Authorization: `Bearer ${bearerToken}` };
+
+  try {
+    const authResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!authResponse.ok) {
+      return jsonResponse({ error: "Tu sesión no es válida. Inicia sesión de nuevo." }, 401);
+    }
+    const user = await authResponse.json();
+    const userId = isRecord(user) && typeof user.id === "string" ? user.id : "";
+    if (!userId) {
+      return jsonResponse({ error: "Tu sesión no es válida. Inicia sesión de nuevo." }, 401);
+    }
+
+    // Con el token del usuario: RLS sólo le deja leer su propia fila
+    const profileResponse = await fetch(
+      `${supabaseUrl}/rest/v1/usuarios?select=familia_id&id=eq.${encodeURIComponent(userId)}&limit=1`,
+      { headers, signal: AbortSignal.timeout(8000) }
+    );
+    if (!profileResponse.ok) {
+      console.warn("No se pudo leer el perfil del usuario:", profileResponse.status);
+      return jsonResponse({ error: "No se pudo verificar tu tribu. Inténtalo de nuevo." }, 503);
+    }
+    const rows = await profileResponse.json();
+    if (!Array.isArray(rows) || !isRecord(rows[0]) || !rows[0].familia_id) {
+      return jsonResponse({ error: "Necesitas pertenecer a una tribu para usar la IA." }, 403);
+    }
+  } catch (authError) {
+    console.warn("No se pudo verificar la sesión de Supabase:", authError);
+    return jsonResponse({ error: "No se pudo verificar tu sesión. Inténtalo de nuevo." }, 503);
+  }
+
+  return null;
 }
 
 function getFallbackRecipe(plato: string, ingredientes: string[]) {
@@ -148,6 +278,39 @@ function getFallbackFridge(items: string[]) {
   ];
 }
 
+function getCuratedMenuFallback(dieta: string = "Mediterránea") {
+  if (dieta === "Vegetariana") {
+    return [
+      { dia: "Lunes", tipo: "Comida", nombre: "Lentejas con verduras y calabaza", tiempo: "35 min", ingredientes: ["400g lentejas pardinas", "200g calabaza", "1 puerro", "2 zanahorias", "Pimentón dulce"] },
+      { dia: "Lunes", tipo: "Cena", nombre: "Tortilla de espinacas y queso feta", tiempo: "20 min", ingredientes: ["4 huevos", "200g espinacas frescas", "60g queso feta", "1 diente de ajo", "Aceite de oliva"] },
+      { dia: "Martes", tipo: "Comida", nombre: "Risotto cremoso de setas variadas", tiempo: "30 min", ingredientes: ["300g arroz carnaroli", "250g setas y champiñones", "1 cebolla", "50g queso parmesano", "Caldo vegetal"] },
+      { dia: "Martes", tipo: "Cena", nombre: "Crema de calabacín con semillas", tiempo: "25 min", ingredientes: ["2 calabacines", "1 patata", "1 puerro", "Semillas de calabaza", "Picatostes"] },
+      { dia: "Miércoles", tipo: "Comida", nombre: "Garbanzos salteados con espinacas", tiempo: "20 min", ingredientes: ["400g garbanzos cocidos", "200g espinacas", "30g piñones", "2 dientes de ajo"] },
+      { dia: "Miércoles", tipo: "Cena", nombre: "Hamburguesas vegetales con ensalada", tiempo: "25 min", ingredientes: ["2 hamburguesas vegetales", "Lechuga", "2 tomates", "1 aguacate"] },
+      { dia: "Jueves", tipo: "Comida", nombre: "Pasta integral con tomate y albahaca", tiempo: "20 min", ingredientes: ["350g pasta integral", "400g tomate triturado", "Albahaca fresca", "1 cebolla", "Queso rallado"] },
+      { dia: "Jueves", tipo: "Cena", nombre: "Fajitas de pimientos y guacamole", tiempo: "25 min", ingredientes: ["6 tortillas de trigo", "1 pimiento rojo", "1 pimiento verde", "Guacamole casero"] },
+      { dia: "Viernes", tipo: "Comida", nombre: "Curry suave de garbanzos con arroz", tiempo: "30 min", ingredientes: ["400g garbanzos", "200ml leche de coco", "200g arroz basmati", "Curry"] },
+      { dia: "Viernes", tipo: "Cena", nombre: "Pizza casera de verduras asadas", tiempo: "30 min", ingredientes: ["1 masa de pizza", "150g mozzarella", "1 calabacín", "Tomates cherry", "Orégano"] },
+      { dia: "Fin de semana", tipo: "Comida", nombre: "Arroz al horno con alcachofas", tiempo: "45 min", ingredientes: ["300g arroz", "4 alcachofas", "1 tomate rallado", "Caldo vegetal", "Azafrán"] },
+      { dia: "Fin de semana", tipo: "Cena", nombre: "Tacos de judías negras con maíz", tiempo: "25 min", ingredientes: ["6 tortillas", "200g judías negras", "1 lata maíz dulce", "2 tomates", "Cilantro"] }
+    ];
+  }
+  return [
+    { dia: "Lunes", tipo: "Comida", nombre: "Lentejas caseras con verduras y jamón", tiempo: "40 min", ingredientes: ["400g lentejas pardinas", "100g taquitos de jamón", "2 zanahorias", "1 cebolla", "1 patata", "Laurel"] },
+    { dia: "Lunes", tipo: "Cena", nombre: "Tortilla de patatas con ensalada mixta", tiempo: "25 min", ingredientes: ["4 huevos frescos", "3 patatas medianas", "Lechuga", "1 tomate", "Aceite de oliva virgen extra"] },
+    { dia: "Martes", tipo: "Comida", nombre: "Salmón al horno con patatas panadera", tiempo: "30 min", ingredientes: ["4 lomos de salmón", "3 patatas", "1 cebolla", "Aceite de oliva", "Limón y eneldo"] },
+    { dia: "Martes", tipo: "Cena", nombre: "Crema de calabacín y picatostes dorados", tiempo: "20 min", ingredientes: ["2 calabacines", "1 puerro", "1 patata", "2 quesitos", "Pan para picatostes"] },
+    { dia: "Miércoles", tipo: "Comida", nombre: "Pasta fresca con salsa boloñesa", tiempo: "30 min", ingredientes: ["350g pasta fresca", "300g carne picada", "400g tomate frito", "1 cebolla", "Queso parmesano"] },
+    { dia: "Miércoles", tipo: "Cena", nombre: "Revuelto de setas y gambas con tostadas", tiempo: "15 min", ingredientes: ["4 huevos", "200g setas variadas", "150g gambas peladas", "2 dientes de ajo", "Pan"] },
+    { dia: "Jueves", tipo: "Comida", nombre: "Pollo asado al limón con patatas", tiempo: "45 min", ingredientes: ["4 cuartos de pollo", "4 patatas", "1 limón", "Romero fresco", "Aceite de oliva"] },
+    { dia: "Jueves", tipo: "Cena", nombre: "Sándwich vegetal completo y gazpacho", tiempo: "15 min", ingredientes: ["Pan integral", "Lechuga y tomate", "2 latas de atún", "Mayonesa", "Gazpacho fresco"] },
+    { dia: "Viernes", tipo: "Comida", nombre: "Arroz caldoso de marisco y pescado", tiempo: "35 min", ingredientes: ["300g arroz", "200g anillas de calamar", "200g gambones", "Caldo de pescado", "Pimentón"] },
+    { dia: "Viernes", tipo: "Cena", nombre: "Pizza casera margarita con jamón cocido", tiempo: "25 min", ingredientes: ["1 masa de pizza fresca", "200g mozzarella", "100g jamón cocido", "Tomate frito", "Orégano"] },
+    { dia: "Fin de semana", tipo: "Comida", nombre: "Paella mixta familiar tradicional", tiempo: "50 min", ingredientes: ["400g arroz bomba", "300g pollo troceado", "200g judías verdes", "Caldo de ave", "Azafrán"] },
+    { dia: "Fin de semana", tipo: "Cena", nombre: "Hamburguesas caseras con patatas gajo", tiempo: "25 min", ingredientes: ["4 panes de hamburguesa", "4 hamburguesas de ternera", "Queso cheddar", "Bacon", "Tomate y lechuga"] }
+  ];
+}
+
 async function callGemini(
   geminiApiKey: string,
   systemInstruction: string,
@@ -158,6 +321,7 @@ async function callGemini(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     {
       method: "POST",
+      signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": geminiApiKey,
@@ -206,10 +370,9 @@ Deno.serve(async (request: Request) => {
     return jsonResponse({ error: "Método no permitido." }, 405);
   }
 
-  const authorization = request.headers.get("Authorization");
-  const bearerToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const supabaseApiKey = request.headers.get("apikey") || Deno.env.get("SUPABASE_ANON_KEY");
+  // Todas las acciones exigen un usuario válido que pertenezca a una familia
+  const authError = await requireUserWithFamily(request);
+  if (authError) return authError;
 
   let body: unknown;
   try {
@@ -221,26 +384,9 @@ Deno.serve(async (request: Request) => {
     return jsonResponse({ error: "La solicitud no contiene parámetros válidos." }, 400);
   }
 
-  const action = typeof body.action === "string" ? body.action : "full_menu";
-
-  // Verificación de sesión de usuario en Supabase
-  if (bearerToken && supabaseUrl && supabaseApiKey) {
-    try {
-      const authResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
-        headers: {
-          apikey: supabaseApiKey,
-          Authorization: `Bearer ${bearerToken}`,
-        },
-      });
-      if (!authResponse.ok && action === "full_menu") {
-        return jsonResponse({ error: "Tu sesión no es válida. Inicia sesión de nuevo." }, 401);
-      }
-    } catch (authError) {
-      console.warn("No se pudo verificar la sesión de Supabase:", authError);
-      if (action === "full_menu") {
-        return jsonResponse({ error: "No se pudo verificar tu sesión. Inténtalo de nuevo." }, 503);
-      }
-    }
+  const action = body.action === undefined ? "full_menu" : body.action;
+  if (typeof action !== "string" || !allowedActions.includes(action)) {
+    return jsonResponse({ error: "Acción no válida." }, 400);
   }
 
   const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
@@ -249,12 +395,19 @@ Deno.serve(async (request: Request) => {
     // 1. PASO A PASO DEL CHEF / RECETA CON IA
     if (action === "recipe_steps") {
       const plato = typeof body.plato === "string" ? body.plato.trim() : "";
-      const rawIngs = Array.isArray(body.ingredientes) ? body.ingredientes : [];
-      const ingredientes = rawIngs.filter((i: unknown) => typeof i === "string" && i.trim());
-
-      if (!plato || plato.length > 120) {
+      if (!plato || plato.length > MAX_PLATO) {
         return jsonResponse({ error: "El nombre del plato no es válido." }, 400);
       }
+
+      const rawIngs = body.ingredientes ?? [];
+      if (
+        !Array.isArray(rawIngs) || rawIngs.length > MAX_INGREDIENTES ||
+        rawIngs.some((i: unknown) => typeof i !== "string")
+      ) {
+        return jsonResponse({ error: "La lista de ingredientes no es válida." }, 400);
+      }
+      // Los ingredientes demasiado largos se recortan en lugar de rechazar el plato
+      const ingredientes = cleanTextList(rawIngs, MAX_INGREDIENTES, MAX_LARGO_INGREDIENTE);
 
       if (!geminiApiKey) {
         return jsonResponse({ recipe: getFallbackRecipe(plato, ingredientes) });
@@ -281,30 +434,36 @@ Genera una guía de cocina clara:
         required: ["plato", "tiempo", "dificultad", "pasos", "truco_chef"],
       };
 
-      let recipe;
+      let recipe = null;
       try {
-        recipe = await callGemini(
+        recipe = sanitizeRecipe(await callGemini(
           geminiApiKey,
           "Eres un chef profesional de cocina casera española. Responde únicamente con un objeto JSON.",
           prompt,
           responseSchema
-        );
+        ), plato);
+        if (!recipe) console.warn("Receta devuelta no válida, usando fallback del chef.");
       } catch (geminiErr) {
         console.warn("Fallo en Gemini recipe_steps, usando fallback del chef:", geminiErr);
-        recipe = getFallbackRecipe(plato, ingredientes);
       }
 
-      return jsonResponse({ recipe });
+      return jsonResponse({ recipe: recipe || getFallbackRecipe(plato, ingredientes) });
     }
 
     // 2. CAMBIAR SOLO ESTE PLATO CON IA (SUGERIR ALTERNATIVAS)
     if (action === "swap_dish") {
-      const dia = typeof body.dia === "string" ? body.dia : "Lunes";
-      const tipo = typeof body.tipo === "string" ? body.tipo : "Comida";
+      const dia = body.dia;
+      const tipo = body.tipo;
+      if (typeof dia !== "string" || !menuDays.includes(dia) || typeof tipo !== "string" || !mealTypes.includes(tipo)) {
+        return jsonResponse({ error: "El día o el tipo de comida no son válidos." }, 400);
+      }
       const dieta = typeof body.dieta === "string" && allowedDiets.includes(body.dieta)
         ? body.dieta
         : "Mediterránea";
       const platoActual = typeof body.plato_actual === "string" ? body.plato_actual.trim() : "";
+      if (platoActual.length > MAX_PLATO) {
+        return jsonResponse({ error: "El nombre del plato no es válido." }, 400);
+      }
 
       if (!geminiApiKey) {
         return jsonResponse({ alternatives: getFallbackAlternatives(dia, tipo, dieta) });
@@ -328,36 +487,44 @@ Para cada plato incluye nombre (máx 120 caracteres), tiempo estimado e ingredie
         },
       };
 
-      let alternatives;
+      let alternatives = null;
       try {
-        alternatives = await callGemini(
+        alternatives = sanitizeAlternatives(await callGemini(
           geminiApiKey,
           "Eres un chef experto en cocina familiar española. Sugiere 3 platos alternativos cumpliendo el esquema JSON.",
           prompt,
           responseSchema
-        );
+        ));
+        if (!alternatives) console.warn("Alternativas devueltas no válidas, usando fallback.");
       } catch (geminiErr) {
         console.warn("Fallo en Gemini swap_dish, usando alternativas de fallback:", geminiErr);
-        alternatives = getFallbackAlternatives(dia, tipo, dieta);
       }
 
-      return jsonResponse({ alternatives });
+      return jsonResponse({ alternatives: alternatives || getFallbackAlternatives(dia, tipo, dieta) });
     }
 
     // 3. COCINA DE APROVECHAMIENTO (¿QUÉ COCINO HOY CON LO QUE TENGO?)
     if (action === "fridge_recipes") {
       const rawIngs = Array.isArray(body.ingredientes)
-        ? body.ingredientes.join(", ")
+        ? body.ingredientes.filter((i: unknown) => typeof i === "string").join(", ").trim()
         : typeof body.ingredientes === "string"
         ? body.ingredientes.trim()
         : "";
-      const tiempoMax = typeof body.tiempo_max === "string" ? body.tiempo_max.trim() : "25 min";
+      const tiempoMax = typeof body.tiempo_max === "string" && body.tiempo_max.trim()
+        ? body.tiempo_max.trim()
+        : "25 min";
 
-      if (!rawIngs || rawIngs.length > 250) {
+      if (!rawIngs) {
         return jsonResponse({ error: "Indica algunos ingredientes de tu nevera o despensa." }, 400);
       }
+      if (rawIngs.length > MAX_INGREDIENTES_NEVERA) {
+        return jsonResponse({ error: `La lista de ingredientes es demasiado larga (máx. ${MAX_INGREDIENTES_NEVERA} caracteres).` }, 400);
+      }
+      if (tiempoMax.length > MAX_TIEMPO) {
+        return jsonResponse({ error: "El tiempo indicado no es válido." }, 400);
+      }
 
-      const ingArr = rawIngs.split(",").map((s: string) => s.trim()).filter(Boolean);
+      const ingArr = rawIngs.split(",").map((s: string) => s.trim()).filter(Boolean).slice(0, MAX_INGREDIENTES);
 
       if (!geminiApiKey) {
         return jsonResponse({ recipes: getFallbackFridge(ingArr) });
@@ -391,20 +558,20 @@ Para cada receta incluye:
         },
       };
 
-      let recipes;
+      let recipes = null;
       try {
-        recipes = await callGemini(
+        recipes = sanitizeFridgeRecipes(await callGemini(
           geminiApiKey,
           "Eres un chef especializado en recetas de aprovechamiento sin desperdicio. Responde únicamente con JSON.",
           prompt,
           responseSchema
-        );
+        ));
+        if (!recipes) console.warn("Recetas devueltas no válidas, usando fallback.");
       } catch (geminiErr) {
         console.warn("Fallo en Gemini fridge_recipes, usando fallback:", geminiErr);
-        recipes = getFallbackFridge(ingArr);
       }
 
-      return jsonResponse({ recipes });
+      return jsonResponse({ recipes: recipes || getFallbackFridge(ingArr) });
     }
 
     // 4. GENERACIÓN DE MENÚ SEMANAL COMPLETO (ACCION POR DEFECTO)
@@ -440,39 +607,6 @@ Incluye entre 4 y 6 ingredientes con cantidades razonables para 4 personas. Resp
       },
     };
 
-function getCuratedMenuFallback(dieta: string = "Mediterránea") {
-  if (dieta === "Vegetariana") {
-    return [
-      { dia: "Lunes", tipo: "Comida", nombre: "Lentejas con verduras y calabaza", tiempo: "35 min", ingredientes: ["400g lentejas pardinas", "200g calabaza", "1 puerro", "2 zanahorias", "Pimentón dulce"] },
-      { dia: "Lunes", tipo: "Cena", nombre: "Tortilla de espinacas y queso feta", tiempo: "20 min", ingredientes: ["4 huevos", "200g espinacas frescas", "60g queso feta", "1 diente de ajo", "Aceite de oliva"] },
-      { dia: "Martes", tipo: "Comida", nombre: "Risotto cremoso de setas variadas", tiempo: "30 min", ingredientes: ["300g arroz carnaroli", "250g setas y champiñones", "1 cebolla", "50g queso parmesano", "Caldo vegetal"] },
-      { dia: "Martes", tipo: "Cena", nombre: "Crema de calabacín con semillas", tiempo: "25 min", ingredientes: ["2 calabacines", "1 patata", "1 puerro", "Semillas de calabaza", "Picatostes"] },
-      { dia: "Miércoles", tipo: "Comida", nombre: "Garbanzos salteados con espinacas", tiempo: "20 min", ingredientes: ["400g garbanzos cocidos", "200g espinacas", "30g piñones", "2 dientes de ajo"] },
-      { dia: "Miércoles", tipo: "Cena", nombre: "Hamburguesas vegetales con ensalada", tiempo: "25 min", ingredientes: ["2 hamburguesas vegetales", "Lechuga", "2 tomates", "1 aguacate"] },
-      { dia: "Jueves", tipo: "Comida", nombre: "Pasta integral con tomate y albahaca", tiempo: "20 min", ingredientes: ["350g pasta integral", "400g tomate triturado", "Albahaca fresca", "1 cebolla", "Queso rallado"] },
-      { dia: "Jueves", tipo: "Cena", nombre: "Fajitas de pimientos y guacamole", tiempo: "25 min", ingredientes: ["6 tortillas de trigo", "1 pimiento rojo", "1 pimiento verde", "Guacamole casero"] },
-      { dia: "Viernes", tipo: "Comida", nombre: "Curry suave de garbanzos con arroz", tiempo: "30 min", ingredientes: ["400g garbanzos", "200ml leche de coco", "200g arroz basmati", "Curry"] },
-      { dia: "Viernes", tipo: "Cena", nombre: "Pizza casera de verduras asadas", tiempo: "30 min", ingredientes: ["1 masa de pizza", "150g mozzarella", "1 calabacín", "Tomates cherry", "Orégano"] },
-      { dia: "Fin de semana", tipo: "Comida", nombre: "Arroz al horno con alcachofas", tiempo: "45 min", ingredientes: ["300g arroz", "4 alcachofas", "1 tomate rallado", "Caldo vegetal", "Azafrán"] },
-      { dia: "Fin de semana", tipo: "Cena", nombre: "Tacos de judías negras con maíz", tiempo: "25 min", ingredientes: ["6 tortillas", "200g judías negras", "1 lata maíz dulce", "2 tomates", "Cilantro"] }
-    ];
-  }
-  return [
-    { dia: "Lunes", tipo: "Comida", nombre: "Lentejas caseras con verduras y jamón", tiempo: "40 min", ingredientes: ["400g lentejas pardinas", "100g taquitos de jamón", "2 zanahorias", "1 cebolla", "1 patata", "Laurel"] },
-    { dia: "Lunes", tipo: "Cena", nombre: "Tortilla de patatas con ensalada mixta", tiempo: "25 min", ingredientes: ["4 huevos frescos", "3 patatas medianas", "Lechuga", "1 tomate", "Aceite de oliva virgen extra"] },
-    { dia: "Martes", tipo: "Comida", nombre: "Salmón al horno con patatas panadera", tiempo: "30 min", ingredientes: ["4 lomos de salmón", "3 patatas", "1 cebolla", "Aceite de oliva", "Limón y eneldo"] },
-    { dia: "Martes", tipo: "Cena", nombre: "Crema de calabacín y picatostes dorados", tiempo: "20 min", ingredientes: ["2 calabacines", "1 puerro", "1 patata", "2 quesitos", "Pan para picatostes"] },
-    { dia: "Miércoles", tipo: "Comida", nombre: "Pasta fresca con salsa boloñesa", tiempo: "30 min", ingredientes: ["350g pasta fresca", "300g carne picada", "400g tomate frito", "1 cebolla", "Queso parmesano"] },
-    { dia: "Miércoles", tipo: "Cena", nombre: "Revuelto de setas y gambas con tostadas", tiempo: "15 min", ingredientes: ["4 huevos", "200g setas variadas", "150g gambas peladas", "2 dientes de ajo", "Pan"] },
-    { dia: "Jueves", tipo: "Comida", nombre: "Pollo asado al limón con patatas", tiempo: "45 min", ingredientes: ["4 cuartos de pollo", "4 patatas", "1 limón", "Romero fresco", "Aceite de oliva"] },
-    { dia: "Jueves", tipo: "Cena", nombre: "Sándwich vegetal completo y gazpacho", tiempo: "15 min", ingredientes: ["Pan integral", "Lechuga y tomate", "2 latas de atún", "Mayonesa", "Gazpacho fresco"] },
-    { dia: "Viernes", tipo: "Comida", nombre: "Arroz caldoso de marisco y pescado", tiempo: "35 min", ingredientes: ["300g arroz", "200g anillas de calamar", "200g gambones", "Caldo de pescado", "Pimentón"] },
-    { dia: "Viernes", tipo: "Cena", nombre: "Pizza casera margarita con jamón cocido", tiempo: "25 min", ingredientes: ["1 masa de pizza fresca", "200g mozzarella", "100g jamón cocido", "Tomate frito", "Orégano"] },
-    { dia: "Fin de semana", tipo: "Comida", nombre: "Paella mixta familiar tradicional", tiempo: "50 min", ingredientes: ["400g arroz bomba", "300g pollo troceado", "200g judías verdes", "Caldo de ave", "Azafrán"] },
-    { dia: "Fin de semana", tipo: "Cena", nombre: "Hamburguesas caseras con patatas gajo", tiempo: "25 min", ingredientes: ["4 panes de hamburguesa", "4 hamburguesas de ternera", "Queso cheddar", "Bacon", "Tomate y lechuga"] }
-  ];
-}
-
     let menu;
     try {
       menu = await callGemini(
@@ -495,6 +629,6 @@ function getCuratedMenuFallback(dieta: string = "Mediterránea") {
   } catch (error) {
     const err = error instanceof Error ? error.message : "Error inesperado.";
     console.error("Error en Edge Function generate-menu:", err);
-    return jsonResponse({ error: `No se pudo procesar con IA: ${err}` }, 502);
+    return jsonResponse({ error: "No se pudo procesar la solicitud con IA. Inténtalo de nuevo." }, 502);
   }
 });
