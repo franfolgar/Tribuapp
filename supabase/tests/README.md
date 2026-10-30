@@ -6,8 +6,8 @@ Simula usuarios con `SET LOCAL ROLE authenticated` y `request.jwt.claims`, y eli
 Generar el SQL a ejecutar (por ejemplo, pegarlo en el SQL Editor de Supabase):
 
 ```bash
-M=supabase/migrations/20261029120000_harden_tasks_invites_grants.sql
-T=supabase/tests/20261029120000_harden_tasks_invites_grants.test.sql
+M=supabase/migrations/20261030075922_harden_tasks_invites_grants.sql
+T=supabase/tests/20261030075922_harden_tasks_invites_grants.test.sql
 { echo "BEGIN;"; grep -vxE 'BEGIN;|COMMIT;' "$M"; cat "$T"; echo "ROLLBACK;"; } > /tmp/prueba.sql
 ```
 

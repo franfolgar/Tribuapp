@@ -10,7 +10,7 @@
 -- para levantar una base local (supabase start + este fichero + migraciones/).
 -- Las migraciones de supabase/migrations/ se aplican encima en orden.
 --
--- Estado anterior a 20261029120000_harden_tasks_invites_grants.sql: no incluye
+-- Estado anterior a 20261030075922_harden_tasks_invites_grants.sql: no incluye
 -- las columnas completado_por/completado_en/dia_mes ni las de invitaciones.
 -- =============================================================================
 
@@ -180,5 +180,5 @@ $function$;
 -- Privilegios por defecto del rol postgres en public (pg_default_acl):
 --   tablas:    anon/authenticated/service_role = Dxtm (TRUNCATE, REFERENCES,
 --              TRIGGER, MAINTAIN). Por eso cada tabla nueva salía con esos
---              privilegios para anon. La migración 20261029120000 los retira.
+--              privilegios para anon. La migración 20261030075922 los retira.
 --   funciones: sólo postgres=X (sin EXECUTE para PUBLIC).
