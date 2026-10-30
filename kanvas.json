@@ -33,6 +33,11 @@
           "at": "2026-10-29T20:36:09Z",
           "by": "agent",
           "text": "Migración en supabase/migrations/20261029120000_harden_tasks_invites_grants.sql y pruebas en supabase/tests/. Pendiente: ejecutar las pruebas con ROLLBACK contra producción (el aviso de Supabase no llegó a confirmarse desde el móvil) y, con visto bueno, aplicar la migración y desplegar generate-menu a la vez que el frontend."
+        },
+        {
+          "at": "2026-10-30T07:53:12Z",
+          "by": "agent",
+          "text": "2026-10-30: pruebas con ROLLBACK contra producción 52/52 correctas; verificado después que no quedó nada aplicado. Pendiente: visto bueno para aplicar la migración y desplegar generate-menu."
         }
       ]
     },
