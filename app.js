@@ -292,7 +292,7 @@ function applyTheme(theme) {
             btnThemeToggle.title = 'Tema: Automático (Sigue el móvil)';
         }
         if (metaTheme) {
-            metaTheme.setAttribute('content', prefersDark ? '#0F172A' : '#4F46E5');
+            metaTheme.setAttribute('content', prefersDark ? '#0E1713' : '#1F5C45');
         }
     } else if (theme === 'dark') {
         document.documentElement.setAttribute('data-theme', 'dark');
@@ -300,14 +300,14 @@ function applyTheme(theme) {
             btnThemeToggle.innerText = '🌙';
             btnThemeToggle.title = 'Tema: Modo Oscuro';
         }
-        if (metaTheme) metaTheme.setAttribute('content', '#0F172A');
+        if (metaTheme) metaTheme.setAttribute('content', '#0E1713');
     } else {
         document.documentElement.setAttribute('data-theme', 'light');
         if (btnThemeToggle) {
             btnThemeToggle.innerText = '☀️';
             btnThemeToggle.title = 'Tema: Modo Claro';
         }
-        if (metaTheme) metaTheme.setAttribute('content', '#4F46E5');
+        if (metaTheme) metaTheme.setAttribute('content', '#1F5C45');
     }
 }
 
@@ -3945,7 +3945,7 @@ function openRecipeModal(dish) {
         </div>
 
         <div style="display: flex; gap: 8px; margin-bottom: 14px;">
-            <button type="button" id="btn-chef-steps" class="btn-primary" style="flex: 1; padding: 10px 12px; font-size: 12px; background: linear-gradient(135deg, #4f46e5, #7c3aed); border: none;">
+            <button type="button" id="btn-chef-steps" class="btn-primary" style="flex: 1; padding: 10px 12px; font-size: 12px; background: var(--primary-solid); border: none;">
                 👨‍🍳 ¿Cómo se cocina? (Paso a paso IA)
             </button>
             <button type="button" id="btn-swap-recipe-dish" class="btn-secondary" style="padding: 10px 12px; font-size: 12px;">

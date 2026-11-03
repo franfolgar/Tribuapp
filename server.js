@@ -28,6 +28,8 @@ const ARCHIVOS_PUBLICOS = new Set([
   'icon-maskable.png',
   'apple-touch-icon.png',
   'register-sw.js',
+  'vendor/fonts/bricolage-grotesque-latin-wght-normal.woff2',
+  'vendor/fonts/bricolage-grotesque-latin-ext-wght-normal.woff2',
   'vendor/supabase-js.mjs' // supabase-js empaquetado localmente (mismo origen, sin CDN)
 ]);
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tribuapp-v13';
+const CACHE_NAME = 'tribuapp-v15';
 // Todas las navegaciones se guardan bajo esta única clave (sin query: los
 // enlaces de invitación llevan tokens que no deben quedar en Cache Storage).
 // Rutas relativas a la carpeta del SW: la app puede servirse en una subcarpeta (GitHub Pages).
@@ -11,6 +11,8 @@ const PRECACHE_URLS = [
   'app.js',
   'register-sw.js',
   'vendor/supabase-js.mjs',
+  'vendor/fonts/bricolage-grotesque-latin-wght-normal.woff2',
+  'vendor/fonts/bricolage-grotesque-latin-ext-wght-normal.woff2',
   'manifest.json',
   'icon-192.png',
   'icon-512.png',
