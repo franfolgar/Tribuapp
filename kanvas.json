@@ -91,6 +91,22 @@
       "at": "2026-10-29T15:24:11Z",
       "by": "agent",
       "desc": "Reglas de modo oscuro válidas, cabecera sin desbordar a 320 px, contraste AA, foco visible, modales con Escape y trampa de foco, supermercado usable con teclado, zonas táctiles de 44 px."
+    },
+    {
+      "id": "SG-03",
+      "title": "Arreglar el bloqueo de la CSP en copias con CRLF",
+      "state": "proposed",
+      "group": "SG",
+      "at": "2026-11-04T11:56:41Z",
+      "by": "claude-code",
+      "desc": "En copias de Windows la consola muestra un error de CSP en cada carga y no se ejecuta el script inline de index.html. Terminado cuando la consola quede limpia y las variables __INITIAL_* estén definidas.",
+      "notes": [
+        {
+          "at": "2026-11-04T11:57:31Z",
+          "by": "claude-code",
+          "text": "Hecho a petición de Fran en la conversación, sin commit todavía: consola sin errores de CSP, variables __INITIAL_* definidas y Lighthouse de buenas prácticas en 100. Falta aprobar la tarea en el tablero."
+        }
+      ]
     }
   ]
 }
