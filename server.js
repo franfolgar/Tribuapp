@@ -41,7 +41,9 @@ function hashesScriptsInline() {
     const hashes = [];
     for (const match of html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)) {
       if (!match[1].trim()) continue;
-      const hash = crypto.createHash('sha256').update(match[1], 'utf8').digest('base64');
+      // El navegador convierte CRLF a LF antes de calcular su hash; sin esto, falla en copias de Windows.
+      const contenido = match[1].replace(/\r\n?/g, '\n');
+      const hash = crypto.createHash('sha256').update(contenido, 'utf8').digest('base64');
       hashes.push(`'sha256-${hash}'`);
     }
     return hashes;
